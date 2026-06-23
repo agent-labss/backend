@@ -251,7 +251,7 @@ linters:
     - goconst
     - gocritic
     - gomoddirectives
-    - gomodguard_v2
+    - gomodguard
     - govet
     - iface
     - ineffassign
@@ -323,13 +323,15 @@ linters:
       retract-allow-no-explanation: false
       toolchain-forbidden: false
       go-debug-forbidden: true
-      check-module-path: true
+      check-module-path: false
 
-    gomodguard_v2:
-      local-replace-directives: true
+    gomodguard:
       allowed:
-        - module: github.com/gofiber/fiber/v3
-        - module: github.com/jackc/pgx/v5
+        modules:
+          - github.com/gofiber/fiber/v3
+          - github.com/jackc/pgx/v5
+      blocked:
+        local-replace-directives: true
 
     interfacebloat:
       max: 3

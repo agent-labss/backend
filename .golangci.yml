@@ -1,0 +1,159 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - copyloopvar
+    - cyclop
+    - depguard
+    - dupl
+    - err113
+    - errcheck
+    - errname
+    - errorlint
+    - funlen
+    - gocognit
+    - goconst
+    - gocritic
+    - gomoddirectives
+    - gomodguard
+    - govet
+    - iface
+    - ineffassign
+    - inamedparam
+    - interfacebloat
+    - ireturn
+    - maintidx
+    - nestif
+    - nilerr
+    - nilnil
+    - nolintlint
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - unused
+    - wrapcheck
+
+  settings:
+    cyclop:
+      max-complexity: 8
+      package-average: 4
+
+    depguard:
+      rules:
+        main:
+          list-mode: strict
+          files:
+            - "$all"
+          allow:
+            - $gostd
+            - orderbuddy-ai/backend
+            - github.com/gofiber/fiber/v3
+            - github.com/jackc/pgx/v5
+
+    dupl:
+      threshold: 100
+
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+
+    funlen:
+      lines: 60
+      statements: 40
+      ignore-comments: true
+
+    gocognit:
+      min-complexity: 12
+
+    goconst:
+      min-len: 2
+      min-occurrences: 2
+      ignore-tests: true
+      ignore-functions:
+        - fmt.Errorf
+        - log.Printf
+        - log.Fatalf
+        - t.Fatalf
+        - t.Fatal
+
+    gomoddirectives:
+      replace-local: false
+      retract-allow-no-explanation: false
+      toolchain-forbidden: false
+      go-debug-forbidden: true
+      check-module-path: false
+
+    gomodguard:
+      allowed:
+        modules:
+          - github.com/gofiber/fiber/v3
+          - github.com/jackc/pgx/v5
+      blocked:
+        local-replace-directives: true
+
+    interfacebloat:
+      max: 3
+
+    ireturn:
+      allow:
+        - error
+        - stdlib
+        - anon
+        - generic
+
+    maintidx:
+      under: 20
+
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-no-explanation: []
+      allow-unused: false
+
+    revive:
+      severity: error
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: early-return
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: exported
+          disabled: true
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: unused-parameter
+        - name: var-declaration
+        - name: var-naming
+
+    wrapcheck:
+      report-internal-errors: false
+      extra-ignore-sigs:
+        - .JSON(
+        - .SendStatus(
+        - .Next(
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

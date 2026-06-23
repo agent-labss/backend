@@ -1112,7 +1112,9 @@ git commit -m "Add tool catalog storage"
 - Create: `internal/toolcatalog/handler.go`
 - Create: `internal/toolcatalog/handler_test.go`
 
-- [ ] **Step 1: Write handler tests**
+Implementation note: handler tests use `newService(storeFromMemoryRepository(...), trustedToolDir)` because Task 4 replaced the planned four-method `Store` interface with a function-backed store to satisfy `repo-guard`.
+
+- [x] **Step 1: Write handler tests**
 
 Create `internal/toolcatalog/handler_test.go`:
 
@@ -1251,7 +1253,7 @@ func TestMemoryRepositoryImplementsStore(_ *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -1261,7 +1263,7 @@ go test ./internal/toolcatalog
 
 Expected: fail because `Handler` does not exist.
 
-- [ ] **Step 3: Implement handler**
+- [x] **Step 3: Implement handler**
 
 Create `internal/toolcatalog/handler.go`:
 
@@ -1329,7 +1331,7 @@ func (handler Handler) UpdateInstructions(c fiber.Ctx) error {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run:
 
@@ -1339,7 +1341,7 @@ go test ./internal/toolcatalog
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/toolcatalog/handler.go internal/toolcatalog/handler_test.go

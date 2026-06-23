@@ -41,17 +41,16 @@ func (value *JSON) Scan(raw any) error {
 }
 
 type Tool struct {
-	ID                     string    `gorm:"primaryKey;type:text"`
-	Name                   string    `gorm:"uniqueIndex;not null"`
-	Description            string    `gorm:"not null"`
-	CommandPath            string    `gorm:"not null"`
-	InputSchema            JSON      `gorm:"type:json;not null"`
-	OutputSchema           JSON      `gorm:"type:json;not null"`
-	TimeoutMS              int       `gorm:"not null"`
-	RequiresServiceAccount bool      `gorm:"not null;default:false"`
-	Status                 string    `gorm:"not null;index"`
-	CreatedAt              time.Time `gorm:"not null"`
-	UpdatedAt              time.Time `gorm:"not null"`
+	ID           string    `gorm:"primaryKey;type:text"`
+	Name         string    `gorm:"uniqueIndex;not null"`
+	Description  string    `gorm:"not null"`
+	CommandPath  string    `gorm:"not null"`
+	InputSchema  JSON      `gorm:"type:json;not null"`
+	OutputSchema JSON      `gorm:"type:json;not null"`
+	TimeoutMS    int       `gorm:"not null"`
+	Status       string    `gorm:"not null;index"`
+	CreatedAt    time.Time `gorm:"not null"`
+	UpdatedAt    time.Time `gorm:"not null"`
 }
 
 type AgentInstruction struct {
@@ -75,7 +74,7 @@ type AgentRunStep struct {
 	ID            string    `gorm:"primaryKey;type:text"`
 	RunID         string    `gorm:"not null;index"`
 	StepOrder     int       `gorm:"not null"`
-	ToolName      string    `gorm:"not null"`
+	ToolID        string    `gorm:"not null;index"`
 	InputSummary  JSON      `gorm:"type:json;not null"`
 	OutputSummary JSON      `gorm:"type:json;not null"`
 	DurationMS    int64     `gorm:"not null"`

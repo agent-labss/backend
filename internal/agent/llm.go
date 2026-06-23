@@ -33,9 +33,14 @@ type OpenAIPlanner struct {
 	model  string
 }
 
-func NewOpenAIPlanner(apiKey string, model string) OpenAIPlanner {
+func NewOpenAIPlanner(apiKey string, model string, baseURL string) OpenAIPlanner {
+	options := []option.RequestOption{option.WithAPIKey(apiKey)}
+	if strings.TrimSpace(baseURL) != "" {
+		options = append(options, option.WithBaseURL(strings.TrimSpace(baseURL)))
+	}
+
 	return OpenAIPlanner{
-		client: openai.NewClient(option.WithAPIKey(apiKey)),
+		client: openai.NewClient(options...),
 		model:  model,
 	}
 }

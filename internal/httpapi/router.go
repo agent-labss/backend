@@ -9,9 +9,7 @@ import (
 )
 
 const (
-	HealthzPath = "/healthz"
-	ReadyzPath  = "/readyz"
-	StatusPath  = "/api/status"
+	StatusPath = "/api/status"
 )
 
 type RouterConfig struct {
@@ -33,8 +31,6 @@ type AgentHandler interface {
 func NewRouter(config RouterConfig) *fiber.App {
 	app := fiber.New()
 	app.Use(withCORS)
-	app.Get(HealthzPath, healthz)
-	app.Get(ReadyzPath, config.StatusHandler.Readyz)
 	app.Get(StatusPath, config.StatusHandler.Status)
 	if config.ToolHandler != nil {
 		app.Post(toolcatalog.ToolsPath, config.ToolHandler.RegisterTool)

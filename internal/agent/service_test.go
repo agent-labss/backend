@@ -83,7 +83,7 @@ func TestServiceRunExecutesToolThenFinalAnswer(t *testing.T) {
 	runStore := &memoryRunStore{}
 	service := NewService(ServiceConfig{
 		Planner:      planner,
-		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{Name: "export_report", TimeoutMS: 1000}}, instructions: toolcatalog.Instructions{Content: "Use tools."}},
+		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "export_report", TimeoutMS: 1000}}, instructions: toolcatalog.Instructions{Content: "Use tools."}},
 		Executor:     executor,
 		RunStore:     runStore,
 		MaxSteps:     8,
@@ -103,6 +103,9 @@ func TestServiceRunExecutesToolThenFinalAnswer(t *testing.T) {
 	}
 	if len(runStore.steps) != 1 {
 		t.Fatalf("saved steps = %d, want 1", len(runStore.steps))
+	}
+	if runStore.steps[0].ToolID != testToolID {
+		t.Fatalf("saved step ToolID = %q, want %s", runStore.steps[0].ToolID, testToolID)
 	}
 }
 
@@ -169,7 +172,7 @@ func TestServiceRunFailsAtStepLimit(t *testing.T) {
 	}}
 	service := NewService(ServiceConfig{
 		Planner:      planner,
-		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{Name: "export_report", TimeoutMS: 1000}}},
+		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "export_report", TimeoutMS: 1000}}},
 		Executor:     executor,
 		RunStore:     &memoryRunStore{},
 		MaxSteps:     1,
@@ -195,7 +198,7 @@ func TestServiceRunAllowsOneBusinessErrorFollowUp(t *testing.T) {
 	runStore := &memoryRunStore{}
 	service := NewService(ServiceConfig{
 		Planner:      planner,
-		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{Name: "find_partner", TimeoutMS: 1000}}},
+		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "find_partner", TimeoutMS: 1000}}},
 		Executor:     executor,
 		RunStore:     runStore,
 		MaxSteps:     8,
@@ -226,7 +229,7 @@ func TestServiceRunFailsRepeatedBusinessError(t *testing.T) {
 	}}
 	service := NewService(ServiceConfig{
 		Planner:      planner,
-		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{Name: "find_partner", TimeoutMS: 1000}}},
+		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "find_partner", TimeoutMS: 1000}}},
 		Executor:     executor,
 		RunStore:     &memoryRunStore{},
 		MaxSteps:     8,

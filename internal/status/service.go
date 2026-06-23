@@ -36,10 +36,6 @@ func NewService(database DatabasePinger) Service {
 	return Service{database: database}
 }
 
-func (service Service) Ready(parent context.Context) error {
-	return service.pingDatabase(parent)
-}
-
 func (service Service) Status(parent context.Context, environment string) Response {
 	databaseStatus := DependencyStatusOK
 	if service.pingDatabase(parent) != nil {

@@ -33,27 +33,25 @@ var toolNamePattern = regexp.MustCompile(`^[a-z0-9_]+$`)
 type ToolStatus string
 
 type Tool struct {
-	ID                     string          `json:"id"`
-	Name                   string          `json:"name"`
-	Description            string          `json:"description"`
-	CommandPath            string          `json:"command_path"`
-	InputSchema            json.RawMessage `json:"input_schema"`
-	OutputSchema           json.RawMessage `json:"output_schema"`
-	TimeoutMS              int             `json:"timeout_ms"`
-	RequiresServiceAccount bool            `json:"requires_service_account"`
-	Status                 ToolStatus      `json:"status"`
-	CreatedAt              time.Time       `json:"created_at"`
-	UpdatedAt              time.Time       `json:"updated_at"`
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	CommandPath  string          `json:"command_path"`
+	InputSchema  json.RawMessage `json:"input_schema"`
+	OutputSchema json.RawMessage `json:"output_schema"`
+	TimeoutMS    int             `json:"timeout_ms"`
+	Status       ToolStatus      `json:"status"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 type RegisterToolRequest struct {
-	Name                   string          `json:"name"`
-	Description            string          `json:"description"`
-	CommandPath            string          `json:"command_path"`
-	InputSchema            json.RawMessage `json:"input_schema"`
-	OutputSchema           json.RawMessage `json:"output_schema"`
-	TimeoutMS              int             `json:"timeout_ms"`
-	RequiresServiceAccount bool            `json:"requires_service_account"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	CommandPath  string          `json:"command_path"`
+	InputSchema  json.RawMessage `json:"input_schema"`
+	OutputSchema json.RawMessage `json:"output_schema"`
+	TimeoutMS    int             `json:"timeout_ms"`
 }
 
 type Instructions struct {
@@ -67,14 +65,13 @@ type UpdateInstructionsRequest struct {
 
 func (request RegisterToolRequest) Tool() Tool {
 	return Tool{
-		Name:                   strings.TrimSpace(request.Name),
-		Description:            strings.TrimSpace(request.Description),
-		CommandPath:            strings.TrimSpace(request.CommandPath),
-		InputSchema:            request.InputSchema,
-		OutputSchema:           request.OutputSchema,
-		TimeoutMS:              request.TimeoutMS,
-		RequiresServiceAccount: request.RequiresServiceAccount,
-		Status:                 ToolStatusEnabled,
+		Name:         strings.TrimSpace(request.Name),
+		Description:  strings.TrimSpace(request.Description),
+		CommandPath:  strings.TrimSpace(request.CommandPath),
+		InputSchema:  request.InputSchema,
+		OutputSchema: request.OutputSchema,
+		TimeoutMS:    request.TimeoutMS,
+		Status:       ToolStatusEnabled,
 	}
 }
 

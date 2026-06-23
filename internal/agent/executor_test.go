@@ -25,13 +25,13 @@ cat >/dev/null
 printf '%s\n' '{"status":"ok","outputs":{"session":{"sensitive":true,"value":"`+testCookieValue+`"},"partner_id":{"sensitive":false,"value":"`+testPartnerID+`"}},"summary":"done"}'
 `)
 
-	executor := NewCLIExecutor(ServiceAccount{Profile: "internal_report_service", Username: "svc", Password: "secret"})
+	executor := NewCLIExecutor()
 	runContext := NewRunContext()
 	observation, err := executor.Execute(context.Background(), ExecuteRequest{
 		RunID:      testRunID,
 		StepID:     testStepID,
 		StepOrder:  1,
-		Tool:       toolcatalog.Tool{Name: "login", CommandPath: commandPath, TimeoutMS: 1000, RequiresServiceAccount: true},
+		Tool:       toolcatalog.Tool{Name: "login", CommandPath: commandPath, TimeoutMS: 1000},
 		Inputs:     map[string]any{},
 		RunContext: runContext,
 	})
@@ -54,7 +54,7 @@ printf '%s\n' '{"status":"ok","outputs":{"session":{"sensitive":true,"value":"`+
 func TestCLIExecutorFailsOnInvalidJSON(t *testing.T) {
 	commandPath := writeToolScript(t, "#!/usr/bin/env sh\nprintf 'not-json'\n")
 
-	executor := NewCLIExecutor(ServiceAccount{})
+	executor := NewCLIExecutor()
 	_, err := executor.Execute(context.Background(), ExecuteRequest{
 		RunID:      testRunID,
 		StepID:     testStepID,
@@ -73,7 +73,7 @@ func TestCLIExecutorReturnsFailedObservationForToolBusinessError(t *testing.T) {
 printf '%s\n' '{"status":"error","error":{"code":"partner_not_found","message":"No partner matched token abc.def.ghi"}}'
 `)
 
-	executor := NewCLIExecutor(ServiceAccount{})
+	executor := NewCLIExecutor()
 	observation, err := executor.Execute(context.Background(), ExecuteRequest{
 		RunID:      testRunID,
 		StepID:     testStepID,
@@ -96,7 +96,7 @@ printf '%s\n' '{"status":"error","error":{"code":"partner_not_found","message":"
 func TestCLIExecutorRedactsStderrOnFailure(t *testing.T) {
 	commandPath := writeToolScript(t, "#!/usr/bin/env sh\necho 'Authorization: Bearer "+testSecretToken+"' >&2\nexit 2\n")
 
-	executor := NewCLIExecutor(ServiceAccount{})
+	executor := NewCLIExecutor()
 	_, err := executor.Execute(context.Background(), ExecuteRequest{
 		RunID:      testRunID,
 		StepID:     testStepID,
@@ -116,7 +116,7 @@ func TestCLIExecutorRedactsStderrOnFailure(t *testing.T) {
 func TestCLIExecutorTimesOut(t *testing.T) {
 	commandPath := writeToolScript(t, "#!/usr/bin/env sh\nsleep 2\n")
 
-	executor := NewCLIExecutor(ServiceAccount{})
+	executor := NewCLIExecutor()
 	_, err := executor.Execute(context.Background(), ExecuteRequest{
 		RunID:      testRunID,
 		StepID:     testStepID,

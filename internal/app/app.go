@@ -81,12 +81,8 @@ func newRouterConfig(cfg config.Config, database *gorm.DB) (httpapi.RouterConfig
 }
 
 func newAgentHandler(cfg config.Config, repository agent.Repository, catalog agent.Catalog) agent.Handler {
-	planner := agent.NewOpenAIPlanner(cfg.OpenAIAPIKey, cfg.OpenAIModel)
-	executor := agent.NewCLIExecutor(agent.ServiceAccount{
-		Profile:  "internal_report_service",
-		Username: cfg.InternalReportUsername,
-		Password: cfg.InternalReportPassword,
-	})
+	planner := agent.NewOpenAIPlanner(cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.OpenAIBaseURL)
+	executor := agent.NewCLIExecutor()
 	service := agent.NewService(agent.ServiceConfig{
 		Planner:      planner,
 		Catalog:      catalog,

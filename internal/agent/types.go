@@ -60,7 +60,7 @@ type StepRecord struct {
 	ID            string
 	RunID         string
 	StepOrder     int
-	ToolName      string
+	ToolID        string
 	InputSummary  json.RawMessage
 	OutputSummary json.RawMessage
 	DurationMS    int64
@@ -86,17 +86,10 @@ type Observation struct {
 }
 
 type ToolInputEnvelope struct {
-	RunID          string         `json:"run_id"`
-	StepID         string         `json:"step_id"`
-	Inputs         map[string]any `json:"inputs"`
-	Context        map[string]any `json:"context"`
-	ServiceAccount ServiceAccount `json:"service_account,omitempty"`
-}
-
-type ServiceAccount struct {
-	Profile  string `json:"profile"`
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
+	RunID   string         `json:"run_id"`
+	StepID  string         `json:"step_id"`
+	Inputs  map[string]any `json:"inputs"`
+	Context map[string]any `json:"context"`
 }
 
 type ToolResult struct {

@@ -193,7 +193,7 @@ func (service Service) executeTool(
 		Inputs:     inputs,
 		RunContext: state.runContext,
 	})
-	step := stepRecord(state.run.ID, stepOrder, tool.Name, inputs, observation, time.Since(started).Milliseconds())
+	step := stepRecord(state.run.ID, stepOrder, tool.ID, inputs, observation, time.Since(started).Milliseconds())
 	if err != nil {
 		step.Status = StepStatusFailed
 		step.ErrorSummary = err.Error()
@@ -209,7 +209,7 @@ func (service Service) recordUnknownTool(ctx context.Context, state *runState, s
 	step := StepRecord{
 		RunID:         state.run.ID,
 		StepOrder:     stepOrder,
-		ToolName:      toolName,
+		ToolID:        "",
 		InputSummary:  mustMarshalJSON(map[string]any{}),
 		OutputSummary: mustMarshalJSON(map[string]any{"error": observation.Error}),
 		Status:        StepStatusFailed,
@@ -259,7 +259,7 @@ func finalResponse(runID string, action PlannerAction) RunResponse {
 func stepRecord(
 	runID string,
 	stepOrder int,
-	toolName string,
+	toolID string,
 	inputs map[string]any,
 	observation Observation,
 	durationMS int64,
@@ -267,7 +267,7 @@ func stepRecord(
 	step := StepRecord{
 		RunID:         runID,
 		StepOrder:     stepOrder,
-		ToolName:      toolName,
+		ToolID:        toolID,
 		InputSummary:  mustMarshalJSON(RedactJSONValue(inputs)),
 		OutputSummary: mustMarshalJSON(RedactJSONValue(nonNilMap(observation.Outputs))),
 		DurationMS:    durationMS,

@@ -37,7 +37,7 @@ Explicitly out of scope:
 
 - Modify `scripts/repo-guard.sh`: allow OpenAI SDK dependency and new packages.
 - Modify `internal/architecture/architecture_test.go`: allow and protect `internal/toolcatalog` and `internal/agent`.
-- Modify `internal/config/config.go`: read OpenAI, tool directory, service account, and agent limit settings.
+- Modify `internal/config/config.go`: read OpenAI, tool directory, and agent limit settings.
 - Modify `internal/config/config_test.go`: cover default and override behavior for new config.
 - Create `internal/toolcatalog/types.go`: typed constants, request/response/domain structs, validation helpers.
 - Create `internal/toolcatalog/types_test.go`: validation tests for tool names, schema JSON objects, timeouts, and trusted paths.
@@ -163,8 +163,6 @@ func TestLoadUsesAgentDefaults(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("OPENAI_MODEL", "")
 	t.Setenv("TRUSTED_TOOL_DIR", "")
-	t.Setenv("INTERNAL_REPORT_USERNAME", "")
-	t.Setenv("INTERNAL_REPORT_PASSWORD", "")
 	t.Setenv("AGENT_MAX_STEPS", "")
 	t.Setenv("AGENT_TOTAL_TIMEOUT_MS", "")
 
@@ -179,12 +177,6 @@ func TestLoadUsesAgentDefaults(t *testing.T) {
 	if cfg.TrustedToolDir != DefaultTrustedToolDir {
 		t.Fatalf("TrustedToolDir = %q, want %q", cfg.TrustedToolDir, DefaultTrustedToolDir)
 	}
-	if cfg.InternalReportUsername != "" {
-		t.Fatalf("InternalReportUsername = %q, want empty", cfg.InternalReportUsername)
-	}
-	if cfg.InternalReportPassword != "" {
-		t.Fatalf("InternalReportPassword = %q, want empty", cfg.InternalReportPassword)
-	}
 	if cfg.AgentMaxSteps != DefaultAgentMaxSteps {
 		t.Fatalf("AgentMaxSteps = %d, want %d", cfg.AgentMaxSteps, DefaultAgentMaxSteps)
 	}
@@ -197,8 +189,6 @@ func TestLoadUsesAgentEnvironmentOverrides(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("OPENAI_MODEL", "gpt-5-mini")
 	t.Setenv("TRUSTED_TOOL_DIR", "/opt/ai-tools")
-	t.Setenv("INTERNAL_REPORT_USERNAME", "svc-user")
-	t.Setenv("INTERNAL_REPORT_PASSWORD", "svc-pass")
 	t.Setenv("AGENT_MAX_STEPS", "12")
 	t.Setenv("AGENT_TOTAL_TIMEOUT_MS", "90000")
 
@@ -282,10 +272,9 @@ type Config struct {
 	OpenAIModel            string
 	TrustedToolDir         string
 	InternalReportUsername string
-	InternalReportPassword string
-	AgentMaxSteps          int
-	AgentTotalTimeoutMS    int
-}
+		AgentMaxSteps          int
+		AgentTotalTimeoutMS    int
+	}
 
 func Load() Config {
 	return Config{
@@ -295,8 +284,6 @@ func Load() Config {
 		OpenAIAPIKey:           getEnv("OPENAI_API_KEY", ""),
 		OpenAIModel:            getEnv("OPENAI_MODEL", DefaultOpenAIModel),
 		TrustedToolDir:         getEnv("TRUSTED_TOOL_DIR", DefaultTrustedToolDir),
-		InternalReportUsername: getEnv("INTERNAL_REPORT_USERNAME", ""),
-		InternalReportPassword: getEnv("INTERNAL_REPORT_PASSWORD", ""),
 		AgentMaxSteps:          getPositiveIntEnv("AGENT_MAX_STEPS", DefaultAgentMaxSteps),
 		AgentTotalTimeoutMS:    getPositiveIntEnv("AGENT_TOTAL_TIMEOUT_MS", DefaultAgentTotalTimeoutMS),
 	}
@@ -519,7 +506,6 @@ type Tool struct {
 	InputSchema            json.RawMessage `json:"input_schema"`
 	OutputSchema           json.RawMessage `json:"output_schema"`
 	TimeoutMS              int             `json:"timeout_ms"`
-	RequiresServiceAccount bool            `json:"requires_service_account"`
 	Status                 ToolStatus      `json:"status"`
 	CreatedAt              time.Time       `json:"created_at"`
 	UpdatedAt              time.Time       `json:"updated_at"`
@@ -532,7 +518,6 @@ type RegisterToolRequest struct {
 	InputSchema            json.RawMessage `json:"input_schema"`
 	OutputSchema           json.RawMessage `json:"output_schema"`
 	TimeoutMS              int             `json:"timeout_ms"`
-	RequiresServiceAccount bool            `json:"requires_service_account"`
 }
 
 type Instructions struct {
@@ -552,7 +537,6 @@ func (request RegisterToolRequest) Tool() Tool {
 		InputSchema:            request.InputSchema,
 		OutputSchema:           request.OutputSchema,
 		TimeoutMS:              request.TimeoutMS,
-		RequiresServiceAccount: request.RequiresServiceAccount,
 		Status:                 ToolStatusEnabled,
 	}
 }
@@ -891,9 +875,9 @@ func (repository Repository) SaveTool(ctx context.Context, tool Tool) (Tool, err
 	}
 
 	row := repository.database.QueryRow(ctx, `
-INSERT INTO tools (name, description, command_path, input_schema, output_schema, timeout_ms, requires_service_account, status)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id::text, name, description, command_path, input_schema, output_schema, timeout_ms, requires_service_account, status, created_at, updated_at
+INSERT INTO tools (name, description, command_path, input_schema, output_schema, timeout_ms, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id::text, name, description, command_path, input_schema, output_schema, timeout_ms, status, created_at, updated_at
 `,
 		tool.Name,
 		tool.Description,
@@ -901,7 +885,6 @@ RETURNING id::text, name, description, command_path, input_schema, output_schema
 		[]byte(tool.InputSchema),
 		[]byte(tool.OutputSchema),
 		tool.TimeoutMS,
-		tool.RequiresServiceAccount,
 		tool.NormalizedStatus(),
 	)
 
@@ -923,7 +906,7 @@ func (repository Repository) ListEnabledTools(ctx context.Context) ([]Tool, erro
 	}
 
 	rows, err := repository.database.Query(ctx, `
-SELECT id::text, name, description, command_path, input_schema, output_schema, timeout_ms, requires_service_account, status, created_at, updated_at
+SELECT id::text, name, description, command_path, input_schema, output_schema, timeout_ms, status, created_at, updated_at
 FROM tools
 WHERE status = $1
 ORDER BY name
@@ -999,7 +982,6 @@ func scanTool(row pgx.Row) (Tool, error) {
 		&inputSchema,
 		&outputSchema,
 		&tool.TimeoutMS,
-		&tool.RequiresServiceAccount,
 		&tool.Status,
 		&tool.CreatedAt,
 		&tool.UpdatedAt,
@@ -1024,7 +1006,6 @@ CREATE TABLE IF NOT EXISTS tools (
 	input_schema jsonb NOT NULL,
 	output_schema jsonb NOT NULL,
 	timeout_ms integer NOT NULL,
-	requires_service_account boolean NOT NULL DEFAULT false,
 	status text NOT NULL,
 	created_at timestamptz NOT NULL DEFAULT now(),
 	updated_at timestamptz NOT NULL DEFAULT now()
@@ -1156,8 +1137,7 @@ func TestHandlerRegisterToolReturnsCreated(t *testing.T) {
 		"command_path":"` + commandPath + `",
 		"input_schema":{"type":"object"},
 		"output_schema":{"type":"object"},
-		"timeout_ms":1000,
-		"requires_service_account":true
+		"timeout_ms":1000
 	}`)
 	req, err := http.NewRequest(http.MethodPost, ToolsPath, bytes.NewReader(body))
 	if err != nil {
@@ -1558,13 +1538,6 @@ type ToolInputEnvelope struct {
 	StepID         string         `json:"step_id"`
 	Inputs         map[string]any `json:"inputs"`
 	Context        map[string]any `json:"context"`
-	ServiceAccount ServiceAccount `json:"service_account,omitempty"`
-}
-
-type ServiceAccount struct {
-	Profile  string `json:"profile"`
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
 }
 
 type ToolResult struct {
@@ -1752,13 +1725,13 @@ printf '%s\n' '{"status":"ok","outputs":{"session":{"sensitive":true,"value":"co
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	executor := NewCLIExecutor(ServiceAccount{Profile: "internal_report_service", Username: "svc", Password: "secret"})
+	executor := NewCLIExecutor()
 	runContext := NewRunContext()
 	observation, err := executor.Execute(context.Background(), ExecuteRequest{
 		RunID:      "run_1",
 		StepID:     "step_1",
 		StepOrder:  1,
-		Tool:       toolcatalog.Tool{Name: "login", CommandPath: commandPath, TimeoutMS: 1000, RequiresServiceAccount: true},
+		Tool:       toolcatalog.Tool{Name: "login", CommandPath: commandPath, TimeoutMS: 1000},
 		Inputs:     map[string]any{},
 		RunContext: runContext,
 	})
@@ -1784,7 +1757,7 @@ func TestCLIExecutorFailsOnInvalidJSON(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	executor := NewCLIExecutor(ServiceAccount{})
+	executor := NewCLIExecutor()
 	_, err := executor.Execute(context.Background(), ExecuteRequest{
 		RunID:      "run_1",
 		StepID:     "step_1",
@@ -1808,7 +1781,7 @@ printf '%s\n' '{"status":"error","error":{"code":"partner_not_found","message":"
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	executor := NewCLIExecutor(ServiceAccount{})
+	executor := NewCLIExecutor()
 	observation, err := executor.Execute(context.Background(), ExecuteRequest{
 		RunID:      "run_1",
 		StepID:     "step_1",
@@ -1836,7 +1809,7 @@ func TestCLIExecutorRedactsStderrOnFailure(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	executor := NewCLIExecutor(ServiceAccount{})
+	executor := NewCLIExecutor()
 	_, err := executor.Execute(context.Background(), ExecuteRequest{
 		RunID:      "run_1",
 		StepID:     "step_1",
@@ -1860,7 +1833,7 @@ func TestCLIExecutorTimesOut(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	executor := NewCLIExecutor(ServiceAccount{})
+	executor := NewCLIExecutor()
 	_, err := executor.Execute(context.Background(), ExecuteRequest{
 		RunID:      "run_1",
 		StepID:     "step_1",
@@ -1920,12 +1893,10 @@ type ExecuteRequest struct {
 	RunContext *RunContext
 }
 
-type CLIExecutor struct {
-	serviceAccount ServiceAccount
-}
+type CLIExecutor struct{}
 
-func NewCLIExecutor(serviceAccount ServiceAccount) CLIExecutor {
-	return CLIExecutor{serviceAccount: serviceAccount}
+func NewCLIExecutor() CLIExecutor {
+	return CLIExecutor{}
 }
 
 func (executor CLIExecutor) Execute(parent context.Context, request ExecuteRequest) (Observation, error) {
@@ -1939,10 +1910,6 @@ func (executor CLIExecutor) Execute(parent context.Context, request ExecuteReque
 		Inputs:  resolveInputs(request.Inputs, request.RunContext),
 		Context: map[string]any{},
 	}
-	if request.Tool.RequiresServiceAccount {
-		envelope.ServiceAccount = executor.serviceAccount
-	}
-
 	stdin, err := json.Marshal(envelope)
 	if err != nil {
 		return Observation{}, fmt.Errorf("%w: encode stdin: %v", ErrToolExecutionFailed, err)
@@ -2379,13 +2346,13 @@ func (repository Repository) SaveStep(ctx context.Context, step StepRecord) erro
 	}
 
 	_, err := repository.database.Exec(ctx, `
-INSERT INTO agent_run_steps (id, run_id, step_order, tool_name, input_summary, output_summary, duration_ms, status, error_summary, created_at)
+INSERT INTO agent_run_steps (id, run_id, step_order, tool_id, input_summary, output_summary, duration_ms, status, error_summary, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 `,
 		newRuntimeID("step"),
 		step.RunID,
 		step.StepOrder,
-		step.ToolName,
+		step.ToolID,
 		[]byte(step.InputSummary),
 		[]byte(step.OutputSummary),
 		step.DurationMS,
@@ -2417,7 +2384,7 @@ CREATE TABLE IF NOT EXISTS agent_run_steps (
 	id text PRIMARY KEY,
 	run_id text NOT NULL REFERENCES agent_runs(id),
 	step_order integer NOT NULL,
-	tool_name text NOT NULL,
+	tool_id text NOT NULL,
 	input_summary jsonb NOT NULL,
 	output_summary jsonb NOT NULL,
 	duration_ms integer NOT NULL,
@@ -3264,11 +3231,7 @@ import (
 	"ai/backend/internal/toolcatalog"
 )
 
-const (
-	HealthzPath = "/healthz"
-	ReadyzPath  = "/readyz"
-	StatusPath  = "/api/status"
-)
+const StatusPath = "/api/status"
 
 type ToolHandler interface {
 	RegisterTool(c fiber.Ctx) error
@@ -3289,8 +3252,6 @@ type RouterConfig struct {
 func NewRouter(config RouterConfig) *fiber.App {
 	app := fiber.New()
 	app.Use(withCORS)
-	app.Get(HealthzPath, healthz)
-	app.Get(ReadyzPath, config.StatusHandler.Readyz)
 	app.Get(StatusPath, config.StatusHandler.Status)
 	if config.ToolHandler != nil {
 		app.Post(toolcatalog.ToolsPath, config.ToolHandler.RegisterTool)
@@ -3353,11 +3314,7 @@ if err := agentRepository.CreateSchema(context.Background()); err != nil {
 	return fmt.Errorf("create agent schema: %w", err)
 }
 planner := agent.NewOpenAIPlanner(cfg.OpenAIAPIKey, cfg.OpenAIModel)
-executor := agent.NewCLIExecutor(agent.ServiceAccount{
-	Profile:  "internal_report_service",
-	Username: cfg.InternalReportUsername,
-	Password: cfg.InternalReportPassword,
-})
+executor := agent.NewCLIExecutor()
 agentService := agent.NewService(agent.ServiceConfig{
 	Planner:      planner,
 	Catalog:      toolService,

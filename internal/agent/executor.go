@@ -23,12 +23,10 @@ type ExecuteRequest struct {
 	RunContext *RunContext
 }
 
-type CLIExecutor struct {
-	serviceAccount ServiceAccount
-}
+type CLIExecutor struct{}
 
-func NewCLIExecutor(serviceAccount ServiceAccount) CLIExecutor {
-	return CLIExecutor{serviceAccount: serviceAccount}
+func NewCLIExecutor() CLIExecutor {
+	return CLIExecutor{}
 }
 
 func (executor CLIExecutor) Execute(parent context.Context, request ExecuteRequest) (Observation, error) {
@@ -76,9 +74,6 @@ func (executor CLIExecutor) inputEnvelope(request ExecuteRequest, runContext *Ru
 		StepID:  request.StepID,
 		Inputs:  resolveInputs(request.Inputs, runContext),
 		Context: map[string]any{},
-	}
-	if request.Tool.RequiresServiceAccount {
-		envelope.ServiceAccount = executor.serviceAccount
 	}
 
 	return envelope

@@ -20,44 +20,6 @@ func (database *fakeDatabase) Ping(context.Context) error {
 	return database.err
 }
 
-func TestServiceReadyReturnsNilWhenDatabasePings(t *testing.T) {
-	database := &fakeDatabase{}
-	service := NewService(database)
-
-	err := service.Ready(context.Background())
-
-	if err != nil {
-		t.Fatalf("Ready() error = %v, want nil", err)
-	}
-	if database.calls != 1 {
-		t.Fatalf("database calls = %d, want 1", database.calls)
-	}
-}
-
-func TestServiceReadyReturnsErrorWhenDatabaseFails(t *testing.T) {
-	database := &fakeDatabase{err: errDatabaseUnavailable}
-	service := NewService(database)
-
-	err := service.Ready(context.Background())
-
-	if !errors.Is(err, errDatabaseUnavailable) {
-		t.Fatalf("Ready() error = %v, want %v", err, errDatabaseUnavailable)
-	}
-	if database.calls != 1 {
-		t.Fatalf("database calls = %d, want 1", database.calls)
-	}
-}
-
-func TestServiceReadyReturnsErrorWhenDatabaseMissing(t *testing.T) {
-	service := NewService(nil)
-
-	err := service.Ready(context.Background())
-
-	if err == nil {
-		t.Fatal("Ready() error = nil, want error")
-	}
-}
-
 func TestServiceStatusReportsDatabaseOK(t *testing.T) {
 	database := &fakeDatabase{}
 	service := NewService(database)

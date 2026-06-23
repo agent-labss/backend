@@ -7,10 +7,12 @@ import (
 
 	"gorm.io/gorm"
 
+	"ai/backend/internal/database"
 	"ai/backend/internal/platform/sqlite"
 )
 
 const testRunAnswer = "done"
+const testToolID = "tool_1"
 
 func TestRepositoryPersistsRunAndStep(t *testing.T) {
 	repository := NewRepository(newTestDatabase(t))
@@ -23,7 +25,7 @@ func TestRepositoryPersistsRunAndStep(t *testing.T) {
 	err = repository.SaveStep(context.Background(), StepRecord{
 		RunID:         run.ID,
 		StepOrder:     1,
-		ToolName:      "report_tool",
+		ToolID:        testToolID,
 		InputSummary:  []byte(`{}`),
 		OutputSummary: []byte(`{"ok":true}`),
 		DurationMS:    10,
@@ -31,6 +33,13 @@ func TestRepositoryPersistsRunAndStep(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("SaveStep() error = %v, want nil", err)
+	}
+	var step database.AgentRunStep
+	if err := repository.database.WithContext(context.Background()).Where("run_id = ?", run.ID).First(&step).Error; err != nil {
+		t.Fatalf("load saved step error = %v", err)
+	}
+	if step.ToolID != testToolID {
+		t.Fatalf("saved step ToolID = %q, want %s", step.ToolID, testToolID)
 	}
 
 	run.Status = RunStatusSucceeded

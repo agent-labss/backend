@@ -85,7 +85,7 @@ func (repository Repository) SaveStep(ctx context.Context, step StepRecord) erro
 		ID:            newRuntimeID("step"),
 		RunID:         step.RunID,
 		StepOrder:     step.StepOrder,
-		ToolName:      step.ToolName,
+		ToolID:        step.ToolID,
 		InputSummary:  database.JSON(step.InputSummary),
 		OutputSummary: database.JSON(step.OutputSummary),
 		DurationMS:    step.DurationMS,

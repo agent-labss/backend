@@ -11,18 +11,17 @@ This design intentionally narrows the broader production workflow generation ide
 3. The backend stores a static agent instruction document.
 4. A user submits a natural-language task.
 5. The backend calls OpenAI to choose tools and generate parameters.
-6. The backend executes registered CLI tools locally with retries, timeouts, logging, auth, and audit.
+6. The backend executes registered CLI tools locally with retries, timeouts, logging, and audit.
 7. Sensitive outputs are held in run-scoped context and exposed to the LLM only as references.
 
 ## Goals
 
 - Register local CLI tools through an HTTP API.
 - Restrict registered commands to a configured trusted tool directory.
-- Store tool descriptions, input schemas, output schemas, timeout settings, and service-account requirements.
+- Store tool descriptions, input schemas, output schemas, and timeout settings.
 - Store one global static instruction document for business rules and tool-use guidance.
 - Run a controlled LLM tool loop that can call multiple registered tools in sequence.
 - Execute tools through fixed command paths with JSON stdin and JSON stdout.
-- Support a configured internal service account for tools that need backend-managed credentials.
 - Preserve sensitive tool outputs in a run-scoped context and show the LLM only `ctx://` references.
 - Record run and step audit with redacted inputs, outputs, errors, duration, and status.
 
@@ -47,11 +46,11 @@ The current backend is small and has strict package ownership:
 - `internal/database` owns GORM models, GORM CLI query inputs, and generated query helpers.
 - `internal/platform/datastore` owns database driver selection, close, and ping adapters.
 - `internal/platform/sqlite` owns SQLite connectivity and migration.
-- `internal/status` owns health and readiness behavior only.
+- `internal/status` owns status behavior only.
 
 Repository guardrails block new packages, new dependencies, new architecture layers, interfaces, or enum-like values unless the need, alternatives, and blast radius are explicit and approved.
 
-This feature cannot fit inside the existing packages without breaking ownership. It introduces tool registration, agent execution, LLM orchestration, command execution, credential handling, and audit records.
+This feature cannot fit inside the existing packages without breaking ownership. It introduces tool registration, agent execution, LLM orchestration, command execution, and audit records.
 
 ## Required New Boundaries
 
@@ -73,7 +72,7 @@ Need: orchestration is separate from the catalog. The agent consumes tools, exec
 
 Alternative considered: combine agent behavior with `internal/toolcatalog`. That would couple durable metadata with runtime execution and make it harder to reason about security and audit boundaries.
 
-Blast radius: new package allowlist entries, architecture tests, SQLite/GORM models for runs and steps, HTTP handler for creating runs, OpenAI configuration, service-account configuration, and command execution tests.
+Blast radius: new package allowlist entries, architecture tests, SQLite/GORM models for runs and steps, HTTP handler for creating runs, OpenAI configuration, and command execution tests.
 
 `internal/agent` may depend on `internal/toolcatalog`. `internal/toolcatalog` must not depend on `internal/agent`.
 
@@ -95,7 +94,7 @@ The system has four main surfaces.
 
 Codex or a developer creates an atomic CLI tool outside this backend and places it in a trusted directory such as `./tools` or `/opt/ai-tools`.
 
-The registration API accepts the tool name, description, command path, input schema, output schema, timeout, and whether the tool requires the internal service account. The backend resolves and validates the command path before persisting it.
+The registration API accepts the tool name, description, command path, input schema, output schema, and timeout. The backend resolves and validates the command path before persisting it.
 
 Command paths must be fixed at registration time. Runtime callers and the LLM cannot provide shell fragments, command flags, or alternate executable paths.
 
@@ -152,7 +151,7 @@ Request:
 ```json
 {
   "name": "login_internal_site",
-  "description": "Login to the internal site using the configured service account.",
+  "description": "Login to the internal site.",
   "command_path": "./tools/login_internal_site",
   "input_schema": {
     "type": "object",
@@ -164,8 +163,7 @@ Request:
       "session_ref": { "type": "string" }
     }
   },
-  "timeout_ms": 10000,
-  "requires_service_account": true
+  "timeout_ms": 10000
 }
 ```
 
@@ -238,11 +236,6 @@ All tools receive the same input envelope on stdin:
   },
   "context": {
     "session_ref": "real-cookie-or-token-after-resolution"
-  },
-  "service_account": {
-    "profile": "internal_report_service",
-    "username": "service-user",
-    "password": "service-password"
   }
 }
 ```
@@ -323,7 +316,6 @@ Key fields:
 - `input_schema`
 - `output_schema`
 - `timeout_ms`
-- `requires_service_account`
 - `status`
 - `created_at`
 - `updated_at`
@@ -362,7 +354,7 @@ Key fields:
 - `id`
 - `run_id`
 - `step_order`
-- `tool_name`
+- `tool_id`
 - `input_summary`
 - `output_summary`
 - `duration_ms`
@@ -375,20 +367,16 @@ Key fields:
 Required or optional environment settings:
 
 - `OPENAI_API_KEY`
+- `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 - `TRUSTED_TOOL_DIR`
-- `INTERNAL_REPORT_USERNAME`
-- `INTERNAL_REPORT_PASSWORD`
 - `AGENT_MAX_STEPS`
 - `AGENT_TOTAL_TIMEOUT_MS`
-
-Service account values are used only when executing tools that declare `requires_service_account=true`. Audit stores the credential profile name, not the secret values.
 
 ## Error Handling
 
 - Tool registration with a path outside `TRUSTED_TOOL_DIR`: reject with validation error.
 - Duplicate tool name: reject with conflict error.
-- Missing service account for a tool that requires it: fail the step and run.
 - OpenAI unavailable: fail the run with an orchestration error.
 - Tool emits invalid JSON: fail the step and run.
 - Tool emits sensitive data in summary or error text: redact before storing or returning.
@@ -401,7 +389,7 @@ Service account values are used only when executing tools that declare `requires
 - Do not let the LLM provide command paths, flags, or shell syntax.
 - Only execute registered tools inside `TRUSTED_TOOL_DIR`.
 - Redact `password`, `token`, `cookie`, `authorization`, `secret`, credential-like keys, bearer tokens, and cookie-like values from observations, audit, and final answers.
-- Do not persist raw service account credentials.
+- Do not persist raw credentials.
 - Do not persist raw sensitive tool outputs.
 - Treat static instructions, tool metadata, user messages, and run audit as sensitive operational data.
 

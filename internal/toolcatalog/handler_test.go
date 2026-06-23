@@ -23,12 +23,11 @@ func TestHandlerRegisterToolReturnsCreated(t *testing.T) {
 	body := []byte(`{
 		"name":"export_report",
 		"description":"Export report.",
-		"command_path":"` + commandPath + `",
-		"input_schema":{"type":"object"},
-		"output_schema":{"type":"object"},
-		"timeout_ms":1000,
-		"requires_service_account":true
-	}`)
+			"command_path":"` + commandPath + `",
+			"input_schema":{"type":"object"},
+			"output_schema":{"type":"object"},
+			"timeout_ms":1000
+		}`)
 	resp := testJSONRequest(t, app, http.MethodPost, ToolsPath, body, http.StatusCreated)
 	defer closeResponseBody(t, resp)
 

@@ -13,7 +13,7 @@ This repository is a small Go backend module, `ai/backend`. It has a deliberatel
 - `internal/database` owns GORM models, GORM CLI query inputs, and generated query helpers.
 - `internal/platform/datastore` owns database driver selection, close, and ping adapters.
 - `internal/platform/sqlite` owns SQLite connectivity and migration.
-- `internal/status` owns health, readiness, and status behavior.
+- `internal/status` owns status behavior.
 
 The main risk is not syntax errors. The risk is local AI coding sessions producing maintainability debt: unnecessary dependencies, premature abstractions, package sprawl, stringly typed domain values, scattered constants, and cross-layer imports that make the repo harder to reason about.
 

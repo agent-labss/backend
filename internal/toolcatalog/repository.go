@@ -99,33 +99,31 @@ func (repository Repository) GetInstructions(ctx context.Context) (Instructions,
 func toolRecord(tool Tool) database.Tool {
 	now := time.Now().UTC()
 	return database.Tool{
-		ID:                     newRecordID("tool"),
-		Name:                   tool.Name,
-		Description:            tool.Description,
-		CommandPath:            tool.CommandPath,
-		InputSchema:            database.JSON(tool.InputSchema),
-		OutputSchema:           database.JSON(tool.OutputSchema),
-		TimeoutMS:              tool.TimeoutMS,
-		RequiresServiceAccount: tool.RequiresServiceAccount,
-		Status:                 string(tool.NormalizedStatus()),
-		CreatedAt:              now,
-		UpdatedAt:              now,
+		ID:           newRecordID("tool"),
+		Name:         tool.Name,
+		Description:  tool.Description,
+		CommandPath:  tool.CommandPath,
+		InputSchema:  database.JSON(tool.InputSchema),
+		OutputSchema: database.JSON(tool.OutputSchema),
+		TimeoutMS:    tool.TimeoutMS,
+		Status:       string(tool.NormalizedStatus()),
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 }
 
 func toolFromRecord(record database.Tool) Tool {
 	return Tool{
-		ID:                     record.ID,
-		Name:                   record.Name,
-		Description:            record.Description,
-		CommandPath:            record.CommandPath,
-		InputSchema:            json.RawMessage(record.InputSchema),
-		OutputSchema:           json.RawMessage(record.OutputSchema),
-		TimeoutMS:              record.TimeoutMS,
-		RequiresServiceAccount: record.RequiresServiceAccount,
-		Status:                 ToolStatus(record.Status),
-		CreatedAt:              record.CreatedAt,
-		UpdatedAt:              record.UpdatedAt,
+		ID:           record.ID,
+		Name:         record.Name,
+		Description:  record.Description,
+		CommandPath:  record.CommandPath,
+		InputSchema:  json.RawMessage(record.InputSchema),
+		OutputSchema: json.RawMessage(record.OutputSchema),
+		TimeoutMS:    record.TimeoutMS,
+		Status:       ToolStatus(record.Status),
+		CreatedAt:    record.CreatedAt,
+		UpdatedAt:    record.UpdatedAt,
 	}
 }
 

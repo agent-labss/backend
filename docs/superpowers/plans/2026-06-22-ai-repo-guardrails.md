@@ -19,7 +19,7 @@
 - Create `internal/architecture/architecture_test.go`: Go-native architecture and package allowlist tests.
 - Create `scripts/repo-guard.sh`: single local guard command.
 - Modify `internal/httpapi/router.go`: centralize route paths.
-- Modify `internal/httpapi/health.go`: use centralized response constants.
+- Modify `internal/httpapi/router.go`: use centralized route constants.
 - Modify `internal/httpapi/middleware.go`: centralize CORS header strings.
 - Modify `internal/status/service.go`: add typed dependency status values and sentinel error.
 - Modify `internal/status/handler.go`: use status constants in JSON responses.
@@ -51,7 +51,7 @@ Keep package ownership intact:
 - `internal/database` owns GORM models, GORM CLI query inputs, and generated query helpers.
 - `internal/platform/datastore` owns database driver selection, close, and ping adapters only.
 - `internal/platform/sqlite` owns SQLite connectivity and migration only.
-- `internal/status` owns health/readiness/status behavior only.
+- `internal/status` owns status behavior only.
 
 Do not bypass package boundaries. In particular, HTTP handlers must not import database platform packages, status logic must not import HTTP or platform packages, and platform packages must not import application or HTTP packages.
 
@@ -424,7 +424,6 @@ git commit -m "Add strict golangci-lint configuration"
 
 **Files:**
 - Modify: `internal/httpapi/router.go`
-- Modify: `internal/httpapi/health.go`
 - Modify: `internal/httpapi/middleware.go`
 - Modify: `internal/httpapi/router_test.go`
 - Modify: `internal/status/service.go`
@@ -445,11 +444,7 @@ import (
 	"ai/backend/internal/status"
 )
 
-const (
-	HealthzPath = "/healthz"
-	ReadyzPath  = "/readyz"
-	StatusPath  = "/api/status"
-)
+const StatusPath = "/api/status"
 
 type RouterConfig struct {
 	StatusHandler status.Handler
@@ -458,35 +453,14 @@ type RouterConfig struct {
 func NewRouter(config RouterConfig) *fiber.App {
 	app := fiber.New()
 	app.Use(withCORS)
-	app.Get(HealthzPath, healthz)
-	app.Get(ReadyzPath, config.StatusHandler.Readyz)
 	app.Get(StatusPath, config.StatusHandler.Status)
 	return app
 }
 ```
 
-- [ ] **Step 2: Centralize HTTP response strings in `internal/httpapi/health.go`**
+- [ ] **Step 2: Keep status responses in `internal/status`**
 
-Replace the file with:
-
-```go
-package httpapi
-
-import (
-	"net/http"
-
-	"github.com/gofiber/fiber/v3"
-)
-
-const (
-	responseStatusField = "status"
-	responseStatusOK    = "ok"
-)
-
-func healthz(c fiber.Ctx) error {
-	return writeJSON(c, http.StatusOK, fiber.Map{responseStatusField: responseStatusOK})
-}
-```
+No standalone process endpoint helper is needed; status response fields belong to `internal/status`.
 
 - [ ] **Step 3: Centralize CORS strings in `internal/httpapi/middleware.go`**
 
@@ -620,14 +594,6 @@ func NewHandler(service Service, environment string) Handler {
 	return Handler{service: service, environment: environment}
 }
 
-func (handler Handler) Readyz(c fiber.Ctx) error {
-	if handler.service.Ready(c.Context()) != nil {
-		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{responseStatusField: DependencyStatusError})
-	}
-
-	return c.Status(http.StatusOK).JSON(fiber.Map{responseStatusField: DependencyStatusOK})
-}
-
 func (handler Handler) Status(c fiber.Ctx) error {
 	return c.Status(http.StatusOK).JSON(handler.service.Status(c.Context(), handler.environment))
 }
@@ -653,7 +619,7 @@ Then replace `defer resp.Body.Close()` with:
 defer closeResponseBody(t, resp)
 ```
 
-Replace hard-coded route paths with `HealthzPath` and `StatusPath`.
+Replace hard-coded route paths with `StatusPath`.
 
 - [ ] **Step 7: Update status tests to use typed constants and checked close**
 
@@ -679,12 +645,11 @@ Replace status route literals with package-local constants:
 
 ```go
 const (
-	readyzPath = "/readyz"
 	statusPath = "/api/status"
 )
 ```
 
-Use `readyzPath` and `statusPath` in `app.Get` and `httptest.NewRequest`.
+Use `statusPath` in `app.Get` and `httptest.NewRequest`.
 
 In `internal/status/service_test.go` and `internal/status/handler_test.go`, replace expected `"ok"` and `"error"` dependency status comparisons with `DependencyStatusOK` and `DependencyStatusError`.
 
@@ -693,7 +658,7 @@ In `internal/status/service_test.go` and `internal/status/handler_test.go`, repl
 Run:
 
 ```bash
-gofmt -w internal/httpapi/router.go internal/httpapi/health.go internal/httpapi/middleware.go internal/httpapi/router_test.go internal/status/service.go internal/status/handler.go internal/status/service_test.go internal/status/handler_test.go
+gofmt -w internal/httpapi/router.go internal/httpapi/middleware.go internal/httpapi/router_test.go internal/status/service.go internal/status/handler.go internal/status/service_test.go internal/status/handler_test.go
 go test ./...
 ```
 

@@ -2456,7 +2456,9 @@ git commit -m "Add agent run audit repository"
 - Create: `internal/agent/service.go`
 - Create: `internal/agent/service_test.go`
 
-- [ ] **Step 1: Write service tests**
+Implementation note: final service code is split into small step handlers and wraps all interface-returned errors; audit and finish errors are not ignored.
+
+- [x] **Step 1: Write service tests**
 
 Create `internal/agent/service_test.go`:
 
@@ -2702,7 +2704,7 @@ func TestServiceRunFailsRepeatedBusinessError(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -2712,7 +2714,7 @@ go test ./internal/agent
 
 Expected: fail because service types do not exist.
 
-- [ ] **Step 3: Implement service loop**
+- [x] **Step 3: Implement service loop**
 
 Create `internal/agent/service.go`:
 
@@ -2951,7 +2953,7 @@ func redactOutputs(outputs map[string]any) map[string]any {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run:
 
@@ -2961,7 +2963,7 @@ go test ./internal/agent
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/agent/service.go internal/agent/service_test.go

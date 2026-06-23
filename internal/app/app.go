@@ -9,22 +9,29 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"orderbuddy-ai/backend/internal/agent"
 	"orderbuddy-ai/backend/internal/config"
 	"orderbuddy-ai/backend/internal/httpapi"
 	"orderbuddy-ai/backend/internal/platform/postgres"
 	"orderbuddy-ai/backend/internal/status"
+	"orderbuddy-ai/backend/internal/toolcatalog"
 )
 
 func Run(cfg config.Config) error {
-	pool, err := postgres.Connect(context.Background(), cfg.DatabaseURL)
+	ctx := context.Background()
+	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("connect postgres: %w", err)
 	}
 	defer pool.Close()
 
-	statusService := status.NewService(pool)
-	statusHandler := status.NewHandler(statusService, cfg.AppEnv)
-	router := httpapi.NewRouter(httpapi.RouterConfig{StatusHandler: statusHandler})
+	routerConfig, err := newRouterConfig(ctx, cfg, pool)
+	if err != nil {
+		return err
+	}
+	router := httpapi.NewRouter(routerConfig)
 
 	listenErr := make(chan error, 1)
 	go func() {
@@ -50,4 +57,46 @@ func Run(cfg config.Config) error {
 	}
 
 	return nil
+}
+
+func newRouterConfig(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) (httpapi.RouterConfig, error) {
+	toolRepository := toolcatalog.NewRepository(pool)
+	if err := toolRepository.CreateSchema(ctx); err != nil {
+		return httpapi.RouterConfig{}, fmt.Errorf("create tool catalog schema: %w", err)
+	}
+	toolService := toolcatalog.NewService(toolRepository, cfg.TrustedToolDir)
+	toolHandler := toolcatalog.NewHandler(toolService)
+
+	agentRepository := agent.NewRepository(pool)
+	if err := agentRepository.CreateSchema(ctx); err != nil {
+		return httpapi.RouterConfig{}, fmt.Errorf("create agent schema: %w", err)
+	}
+	agentHandler := newAgentHandler(cfg, agentRepository, toolService)
+
+	statusService := status.NewService(pool)
+	statusHandler := status.NewHandler(statusService, cfg.AppEnv)
+
+	return httpapi.RouterConfig{
+		StatusHandler: statusHandler,
+		ToolHandler:   toolHandler,
+		AgentHandler:  agentHandler,
+	}, nil
+}
+
+func newAgentHandler(cfg config.Config, repository agent.Repository, catalog agent.Catalog) agent.Handler {
+	planner := agent.NewOpenAIPlanner(cfg.OpenAIAPIKey, cfg.OpenAIModel)
+	executor := agent.NewCLIExecutor(agent.ServiceAccount{
+		Profile:  "internal_report_service",
+		Username: cfg.InternalReportUsername,
+		Password: cfg.InternalReportPassword,
+	})
+	service := agent.NewService(agent.ServiceConfig{
+		Planner:      planner,
+		Catalog:      catalog,
+		Executor:     executor,
+		RunStore:     repository,
+		MaxSteps:     cfg.AgentMaxSteps,
+		TotalTimeout: time.Duration(cfg.AgentTotalTimeoutMS) * time.Millisecond,
+	})
+	return agent.NewHandler(service)
 }

@@ -3321,7 +3321,7 @@ git commit -m "Register agent and tool routes"
 - Modify: `internal/app/app.go`
 - Modify: `internal/app/app_test.go`
 
-- [ ] **Step 1: Update app wiring**
+- [x] **Step 1: Update app wiring**
 
 Modify `internal/app/app.go` imports to include:
 
@@ -3373,7 +3373,7 @@ router := httpapi.NewRouter(httpapi.RouterConfig{
 })
 ```
 
-- [ ] **Step 2: Run app tests**
+- [x] **Step 2: Run app tests**
 
 Run:
 
@@ -3383,7 +3383,7 @@ go test ./internal/app
 
 Expected: pass. `TestRunWrapsPostgresConnectionErrors` should still pass because invalid PostgreSQL URL fails before schema creation.
 
-- [ ] **Step 3: Run package tests touched so far**
+- [x] **Step 3: Run package tests touched so far**
 
 Run:
 
@@ -3393,7 +3393,7 @@ go test ./internal/app ./internal/httpapi ./internal/toolcatalog ./internal/agen
 
 Expected: pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/app/app.go internal/app/app_test.go

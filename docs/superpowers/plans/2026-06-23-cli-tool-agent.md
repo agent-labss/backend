@@ -343,7 +343,7 @@ git commit -m "Add agent runtime configuration"
 - Create: `internal/toolcatalog/types.go`
 - Create: `internal/toolcatalog/types_test.go`
 
-- [ ] **Step 1: Write failing validation tests**
+- [x] **Step 1: Write failing validation tests**
 
 Create `internal/toolcatalog/types_test.go`:
 
@@ -456,7 +456,7 @@ func TestToolValidateDefaultsStatusToEnabled(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
 
 Run:
 
@@ -466,7 +466,7 @@ go test ./internal/toolcatalog
 
 Expected: fail because the package has no implementation.
 
-- [ ] **Step 3: Implement tool catalog types**
+- [x] **Step 3: Implement tool catalog types**
 
 Create `internal/toolcatalog/types.go`:
 
@@ -634,7 +634,7 @@ func validateTrustedCommandPath(commandPath string, trustedToolDir string) error
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run:
 
@@ -644,7 +644,7 @@ go test ./internal/toolcatalog
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/toolcatalog/types.go internal/toolcatalog/types_test.go

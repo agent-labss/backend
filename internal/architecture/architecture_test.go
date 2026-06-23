@@ -15,12 +15,14 @@ const modulePath = "orderbuddy-ai/backend"
 
 var allowedPackages = []string{
 	modulePath + "/cmd/server",
+	modulePath + "/internal/agent",
 	modulePath + "/internal/app",
 	modulePath + "/internal/architecture",
 	modulePath + "/internal/config",
 	modulePath + "/internal/httpapi",
 	modulePath + "/internal/platform/postgres",
 	modulePath + "/internal/status",
+	modulePath + "/internal/toolcatalog",
 }
 
 type packageInfo struct {
@@ -46,6 +48,13 @@ func TestPackageBoundaries(t *testing.T) {
 	assertDoesNotImport(t, packages, modulePath+"/internal/status", modulePath+"/internal/platform/postgres")
 	assertDoesNotImport(t, packages, modulePath+"/internal/platform/postgres", modulePath+"/internal/httpapi")
 	assertDoesNotImport(t, packages, modulePath+"/internal/platform/postgres", modulePath+"/internal/status")
+	assertDoesNotImport(t, packages, modulePath+"/internal/toolcatalog", modulePath+"/internal/agent")
+	assertDoesNotImport(t, packages, modulePath+"/internal/toolcatalog", modulePath+"/internal/httpapi")
+	assertDoesNotImport(t, packages, modulePath+"/internal/toolcatalog", modulePath+"/internal/platform/postgres")
+	assertDoesNotImport(t, packages, modulePath+"/internal/agent", modulePath+"/internal/httpapi")
+	assertDoesNotImport(t, packages, modulePath+"/internal/agent", modulePath+"/internal/platform/postgres")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/postgres", modulePath+"/internal/agent")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/postgres", modulePath+"/internal/toolcatalog")
 	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/app")
 	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/httpapi")
 	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/platform/postgres")

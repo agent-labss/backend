@@ -26,6 +26,7 @@ direct_deps="$(go list -m -f '{{if not .Indirect}}{{.Path}}{{end}}' all | sed '/
 allowed_direct_deps="$(printf '%s\n' \
   'github.com/gofiber/fiber/v3' \
   'github.com/jackc/pgx/v5' \
+  'github.com/openai/openai-go/v3' \
   'orderbuddy-ai/backend' \
   | sort)"
 unexpected_deps="$(comm -23 <(printf '%s\n' "${direct_deps}") <(printf '%s\n' "${allowed_direct_deps}"))"
@@ -47,12 +48,14 @@ echo "checking package allowlist"
 packages="$(go list ./... | sort)"
 allowed_packages="$(printf '%s\n' \
   'orderbuddy-ai/backend/cmd/server' \
+  'orderbuddy-ai/backend/internal/agent' \
   'orderbuddy-ai/backend/internal/app' \
   'orderbuddy-ai/backend/internal/architecture' \
   'orderbuddy-ai/backend/internal/config' \
   'orderbuddy-ai/backend/internal/httpapi' \
   'orderbuddy-ai/backend/internal/platform/postgres' \
   'orderbuddy-ai/backend/internal/status' \
+  'orderbuddy-ai/backend/internal/toolcatalog' \
   | sort)"
 unexpected_packages="$(comm -23 <(printf '%s\n' "${packages}") <(printf '%s\n' "${allowed_packages}"))"
 if [[ -n "${unexpected_packages}" ]]; then

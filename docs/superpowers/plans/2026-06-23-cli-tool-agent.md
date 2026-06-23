@@ -659,7 +659,9 @@ git commit -m "Add tool catalog validation"
 - Create: `internal/toolcatalog/service.go`
 - Create: `internal/toolcatalog/service_test.go`
 
-- [ ] **Step 1: Write repository tests**
+Implementation note: the final service implementation uses an unexported function-backed store and `NewService(repository Repository, trustedToolDir string)` instead of a four-method `Store` interface, because `repo-guard` rejects interfaces with more than three methods.
+
+- [x] **Step 1: Write repository tests**
 
 Create `internal/toolcatalog/repository_test.go`:
 
@@ -696,7 +698,7 @@ func TestRepositorySchemaContainsTables(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Write service tests**
+- [x] **Step 2: Write service tests**
 
 Create `internal/toolcatalog/service_test.go`:
 
@@ -820,7 +822,7 @@ func TestServiceGetInstructionsReturnsEmptyWhenMissing(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run tests to verify failure**
+- [x] **Step 3: Run tests to verify failure**
 
 Run:
 
@@ -830,7 +832,7 @@ go test ./internal/toolcatalog
 
 Expected: fail because repository and service types do not exist.
 
-- [ ] **Step 4: Implement repository**
+- [x] **Step 4: Implement repository**
 
 Create `internal/toolcatalog/repository.go`:
 
@@ -1031,7 +1033,7 @@ CREATE TABLE IF NOT EXISTS agent_instructions (
 }
 ```
 
-- [ ] **Step 5: Implement service**
+- [x] **Step 5: Implement service**
 
 Create `internal/toolcatalog/service.go`:
 
@@ -1087,7 +1089,7 @@ func (service Service) GetInstructions(ctx context.Context) (Instructions, error
 }
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run:
 
@@ -1097,7 +1099,7 @@ go test ./internal/toolcatalog
 
 Expected: pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add internal/toolcatalog/repository.go internal/toolcatalog/repository_test.go internal/toolcatalog/service.go internal/toolcatalog/service_test.go

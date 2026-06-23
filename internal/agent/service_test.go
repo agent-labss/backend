@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -74,6 +75,37 @@ func (store *memoryRunStore) SaveStep(_ context.Context, step StepRecord) error 
 	return nil
 }
 
+type blockingFinishRunStore struct {
+	finishStarted chan struct{}
+	finishContext context.Context
+	finishedRun   Run
+}
+
+func newBlockingFinishRunStore() *blockingFinishRunStore {
+	return &blockingFinishRunStore{finishStarted: make(chan struct{})}
+}
+
+func (store *blockingFinishRunStore) StartRun(_ context.Context, message string) (Run, error) {
+	return Run{ID: testRunID, Message: message, Status: RunStatusRunning, StartedAt: time.Now()}, nil
+}
+
+func (store *blockingFinishRunStore) FinishRun(ctx context.Context, run Run) error {
+	store.finishContext = ctx
+	store.finishedRun = run
+	close(store.finishStarted)
+	<-ctx.Done()
+	return fmt.Errorf("finish wait: %w", ctx.Err())
+}
+
+func (store *blockingFinishRunStore) SaveStep(_ context.Context, _ StepRecord) error {
+	return nil
+}
+
+type runResult struct {
+	response RunResponse
+	err      error
+}
+
 func TestServiceRunExecutesToolThenFinalAnswer(t *testing.T) {
 	planner := &fakePlanner{actions: []PlannerAction{
 		{Type: ActionTypeCallTool, Tool: "export_report", Inputs: json.RawMessage(`{"month":"2026-05"}`)},
@@ -130,6 +162,70 @@ func TestServiceRunFailsOnUnknownToolAfterRetry(t *testing.T) {
 	}
 	if response.Status != RunStatusFailed {
 		t.Fatalf("Status = %q, want failed", response.Status)
+	}
+}
+
+func TestServiceRunBoundsFailedRunPersistence(t *testing.T) {
+	const cleanupTimeout = 20 * time.Millisecond
+
+	runStore := newBlockingFinishRunStore()
+	service := newServiceWithFailedRunFinishTimeout(runStore, cleanupTimeout)
+
+	done := make(chan runResult, 1)
+	go func() {
+		response, err := service.Run(context.Background(), CreateRunRequest{Message: "run fails"})
+		done <- runResult{response: response, err: err}
+	}()
+
+	select {
+	case <-runStore.finishStarted:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("FinishRun was not called for failed run")
+	}
+
+	requireFailedRunFinishContext(t, runStore)
+	requireFailedRunReturned(t, done)
+}
+
+func newServiceWithFailedRunFinishTimeout(runStore *blockingFinishRunStore, timeout time.Duration) Service {
+	service := NewService(ServiceConfig{
+		Planner:      &fakePlanner{},
+		Catalog:      fakeCatalog{},
+		Executor:     &fakeExecutor{},
+		RunStore:     runStore,
+		MaxSteps:     8,
+		TotalTimeout: time.Minute,
+	})
+	service.failedRunFinishTimeout = timeout
+	return service
+}
+
+func requireFailedRunFinishContext(t *testing.T, runStore *blockingFinishRunStore) {
+	t.Helper()
+
+	if _, ok := runStore.finishContext.Deadline(); !ok {
+		t.Fatal("FinishRun context has no deadline")
+	}
+	if runStore.finishedRun.Status != RunStatusFailed {
+		t.Fatalf("finished run status = %q, want failed", runStore.finishedRun.Status)
+	}
+}
+
+func requireFailedRunReturned(t *testing.T, done <-chan runResult) {
+	t.Helper()
+	select {
+	case result := <-done:
+		if result.err == nil {
+			t.Fatal("Run() error = nil, want planner error joined with cleanup deadline")
+		}
+		if !errors.Is(result.err, context.DeadlineExceeded) {
+			t.Fatalf("Run() error = %v, want context deadline exceeded", result.err)
+		}
+		if result.response.Status != RunStatusFailed {
+			t.Fatalf("response status = %q, want failed", result.response.Status)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Run() did not return after failed-run cleanup timeout")
 	}
 }
 

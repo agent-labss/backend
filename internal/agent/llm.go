@@ -62,6 +62,7 @@ func (planner OpenAIPlanner) NextAction(ctx context.Context, request PlanRequest
 		Input: responses.ResponseNewParamsInputUnion{
 			OfString: openai.String(string(prompt)),
 		},
+		Text: plannerResponseTextConfig(),
 	})
 	if err != nil {
 		return PlannerAction{}, fmt.Errorf("openai response: %w", err)
@@ -85,10 +86,11 @@ func ParsePlannerAction(raw []byte) (PlannerAction, error) {
 
 func buildPlannerPrompt(request PlanRequest) ([]byte, error) {
 	prompt, err := json.Marshal(map[string]any{
-		"instructions": request.Instructions,
-		"message":      request.Message,
-		"tools":        plannerTools(request.Tools),
-		"observations": request.Observations,
+		"instructions":    request.Instructions,
+		"message":         request.Message,
+		"tools":           plannerTools(request.Tools),
+		"observations":    request.Observations,
+		"output_contract": "Return exactly one JSON object for the next planner action. Do not include Markdown, prose, fenced JSON, refusals, or partial output.",
 		"allowed_actions": []string{
 			string(ActionTypeCallTool),
 			string(ActionTypeFinalAnswer),
@@ -99,6 +101,15 @@ func buildPlannerPrompt(request PlanRequest) ([]byte, error) {
 	}
 
 	return prompt, nil
+}
+
+func plannerResponseTextConfig() responses.ResponseTextConfigParam {
+	jsonObject := shared.NewResponseFormatJSONObjectParam()
+	return responses.ResponseTextConfigParam{
+		Format: responses.ResponseFormatTextConfigUnionParam{
+			OfJSONObject: &jsonObject,
+		},
+	}
 }
 
 func plannerTools(tools []toolcatalog.Tool) []plannerTool {

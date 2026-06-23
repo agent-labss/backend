@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -77,6 +78,11 @@ func assertPlannerRequest(t *testing.T, w http.ResponseWriter, r *http.Request, 
 
 	var payload struct {
 		Model string `json:"model"`
+		Text  struct {
+			Format struct {
+				Type string `json:"type"`
+			} `json:"format"`
+		} `json:"text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		t.Errorf("Decode request body error = %v", err)
@@ -86,6 +92,11 @@ func assertPlannerRequest(t *testing.T, w http.ResponseWriter, r *http.Request, 
 	if payload.Model != model {
 		t.Errorf("model = %q, want %q", payload.Model, model)
 		http.Error(w, "wrong model", http.StatusBadRequest)
+		return false
+	}
+	if payload.Text.Format.Type != "json_object" {
+		t.Errorf("text.format.type = %q, want json_object", payload.Text.Format.Type)
+		http.Error(w, "missing structured output format", http.StatusBadRequest)
 		return false
 	}
 
@@ -163,6 +174,29 @@ func TestParsePlannerActionRejectsUnknownAction(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("ParsePlannerAction() error = nil, want error")
+	}
+}
+
+func TestParsePlannerActionRejectsNonJSONPlannerText(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "prose", raw: `Here is the next action: {"type":"final_answer","answer":"done"}`},
+		{name: "fenced", raw: "```json\n{\"type\":\"final_answer\",\"answer\":\"done\"}\n```"},
+		{name: "partial", raw: `{"type":"final_answer","answer":"done"`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ParsePlannerAction([]byte(test.raw))
+			if err == nil {
+				t.Fatal("ParsePlannerAction() error = nil, want error")
+			}
+			if !errors.Is(err, ErrInvalidPlannerAction) {
+				t.Fatalf("ParsePlannerAction() error = %v, want ErrInvalidPlannerAction", err)
+			}
+		})
 	}
 }
 

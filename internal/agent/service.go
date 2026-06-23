@@ -12,6 +12,8 @@ import (
 
 var ErrRunFailed = errors.New("agent run failed")
 
+const defaultFailedRunFinishTimeout = 5 * time.Second
+
 type Catalog interface {
 	ListEnabledTools(ctx context.Context) ([]toolcatalog.Tool, error)
 	GetInstructions(ctx context.Context) (toolcatalog.Instructions, error)
@@ -37,12 +39,13 @@ type ServiceConfig struct {
 }
 
 type Service struct {
-	planner      Planner
-	catalog      Catalog
-	executor     Executor
-	runStore     RunStore
-	maxSteps     int
-	totalTimeout time.Duration
+	planner                Planner
+	catalog                Catalog
+	executor               Executor
+	runStore               RunStore
+	maxSteps               int
+	totalTimeout           time.Duration
+	failedRunFinishTimeout time.Duration
 }
 
 type runState struct {
@@ -59,12 +62,13 @@ type runState struct {
 
 func NewService(config ServiceConfig) Service {
 	return Service{
-		planner:      config.Planner,
-		catalog:      config.Catalog,
-		executor:     config.Executor,
-		runStore:     config.RunStore,
-		maxSteps:     config.MaxSteps,
-		totalTimeout: config.TotalTimeout,
+		planner:                config.Planner,
+		catalog:                config.Catalog,
+		executor:               config.Executor,
+		runStore:               config.RunStore,
+		maxSteps:               config.MaxSteps,
+		totalTimeout:           config.TotalTimeout,
+		failedRunFinishTimeout: defaultFailedRunFinishTimeout,
 	}
 }
 
@@ -237,7 +241,9 @@ func (service Service) saveStep(ctx context.Context, step StepRecord) error {
 func (service Service) failRun(run Run, response RunResponse, runErr error) (RunResponse, error) {
 	run.Status = RunStatusFailed
 	run.ErrorSummary = runErr.Error()
-	if err := service.runStore.FinishRun(context.Background(), run); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), service.failedRunFinishTimeout)
+	defer cancel()
+	if err := service.runStore.FinishRun(ctx, run); err != nil {
 		runErr = errors.Join(runErr, fmt.Errorf("finish failed run: %w", err))
 	}
 

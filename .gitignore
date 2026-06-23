@@ -38,6 +38,7 @@ Thumbs.db
 # Local agent/tooling state
 .codegraph/
 .codex/
+.worktrees/
 
 .codex
 .codegraph

@@ -19,10 +19,12 @@ var sensitiveKeyFragments = []string{
 
 var bearerPattern = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/=-]+`)
 var cookiePairPattern = regexp.MustCompile(`(?i)(cookie:\s*)[^\n\r]+`)
+var tokenLikePattern = regexp.MustCompile(`[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
 
 func RedactText(value string) string {
 	redacted := bearerPattern.ReplaceAllString(value, "Bearer "+redactedValue)
 	redacted = cookiePairPattern.ReplaceAllString(redacted, "${1}"+redactedValue)
+	redacted = tokenLikePattern.ReplaceAllString(redacted, redactedValue)
 	return redacted
 }
 

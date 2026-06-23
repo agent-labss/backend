@@ -1715,7 +1715,9 @@ git commit -m "Add agent redaction and context"
 - Create: `internal/agent/executor.go`
 - Create: `internal/agent/executor_test.go`
 
-- [ ] **Step 1: Write executor tests**
+Implementation note: executor input resolution reads `ContextValue.Value` from `RunContext.Resolve`, and redaction also covers JWT-like three-part tokens without a `Bearer` prefix.
+
+- [x] **Step 1: Write executor tests**
 
 Create `internal/agent/executor_test.go`:
 
@@ -1872,7 +1874,7 @@ func TestCLIExecutorTimesOut(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -1882,7 +1884,7 @@ go test ./internal/agent
 
 Expected: fail because executor types do not exist.
 
-- [ ] **Step 3: Implement CLI executor**
+- [x] **Step 3: Implement CLI executor**
 
 Create `internal/agent/executor.go`:
 
@@ -2012,7 +2014,7 @@ func resolveInputs(inputs map[string]any, runContext *RunContext) map[string]any
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run:
 
@@ -2022,7 +2024,7 @@ go test ./internal/agent
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/agent/executor.go internal/agent/executor_test.go

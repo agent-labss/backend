@@ -56,6 +56,7 @@ linters:
             - orderbuddy-ai/backend
             - github.com/gofiber/fiber/v3
             - github.com/jackc/pgx/v5
+            - github.com/openai/openai-go/v3
 
     dupl:
       threshold: 100
@@ -100,6 +101,7 @@ linters:
         modules:
           - github.com/gofiber/fiber/v3
           - github.com/jackc/pgx/v5
+          - github.com/openai/openai-go/v3
       blocked:
         local-replace-directives: true
 

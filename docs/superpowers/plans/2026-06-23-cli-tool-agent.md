@@ -2039,7 +2039,9 @@ git commit -m "Add CLI tool executor"
 - Modify: `go.mod`
 - Modify: `go.sum`
 
-- [ ] **Step 1: Add OpenAI SDK dependency**
+Implementation note: SDK `v3.41.0` requires `shared.ResponsesModel` for `responses.ResponseNewParams.Model`; `.golangci.yml` also needs OpenAI in both `depguard` and `gomodguard` allowlists.
+
+- [x] **Step 1: Add OpenAI SDK dependency**
 
 Run:
 
@@ -2049,7 +2051,7 @@ go get github.com/openai/openai-go/v3@latest
 
 Expected: `go.mod` gains direct dependency `github.com/openai/openai-go/v3`, and `go.sum` is updated.
 
-- [ ] **Step 2: Write planner parsing tests**
+- [x] **Step 2: Write planner parsing tests**
 
 Create `internal/agent/llm_test.go`:
 
@@ -2091,7 +2093,7 @@ func TestParsePlannerActionRejectsUnknownAction(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run tests to verify failure**
+- [x] **Step 3: Run tests to verify failure**
 
 Run:
 
@@ -2101,7 +2103,7 @@ go test ./internal/agent
 
 Expected: fail because planner functions do not exist.
 
-- [ ] **Step 4: Implement planner boundary**
+- [x] **Step 4: Implement planner boundary**
 
 Create `internal/agent/llm.go`:
 
@@ -2209,7 +2211,7 @@ func isJSONObject(raw json.RawMessage) bool {
 }
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 
@@ -2219,7 +2221,7 @@ go test ./internal/agent
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/agent/llm.go internal/agent/llm_test.go go.mod go.sum

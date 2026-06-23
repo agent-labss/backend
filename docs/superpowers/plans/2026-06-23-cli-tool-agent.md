@@ -3405,7 +3405,7 @@ git commit -m "Wire CLI tool agent"
 **Files:**
 - No source changes expected unless verification fails.
 
-- [ ] **Step 1: Format all Go files**
+- [x] **Step 1: Format all Go files**
 
 Run:
 
@@ -3415,7 +3415,7 @@ gofmt -w internal/architecture/architecture_test.go internal/config/config.go in
 
 Expected: no output.
 
-- [ ] **Step 2: Run full tests**
+- [x] **Step 2: Run full tests**
 
 Run:
 
@@ -3425,7 +3425,7 @@ go test ./...
 
 Expected: all packages pass.
 
-- [ ] **Step 3: Run repository guard**
+- [x] **Step 3: Run repository guard**
 
 Run:
 
@@ -3435,7 +3435,7 @@ Run:
 
 Expected: `repo guard passed`.
 
-- [ ] **Step 4: Commit verification fixes if needed**
+- [x] **Step 4: Commit verification fixes if needed**
 
 If formatting, lint, or tests required code changes:
 

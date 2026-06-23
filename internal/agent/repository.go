@@ -2,39 +2,35 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/gorm"
+
+	"orderbuddy-ai/backend/internal/database"
+	"orderbuddy-ai/backend/internal/database/generated"
 )
 
 var ErrDatabaseMissing = errors.New("agent database is missing")
 
-type database interface {
-	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
-}
-
 type Repository struct {
-	database database
+	database *gorm.DB
 }
 
-func NewRepository(pool *pgxpool.Pool) Repository {
-	if pool == nil {
+func NewRepository(db *gorm.DB) Repository {
+	if db == nil {
 		return Repository{}
 	}
 
-	return Repository{database: pool}
+	return Repository{database: db}
 }
 
-func (repository Repository) CreateSchema(ctx context.Context) error {
+func (repository Repository) CreateSchema(context.Context) error {
 	if repository.database == nil {
 		return ErrDatabaseMissing
-	}
-	if _, err := repository.database.Exec(ctx, schemaSQL()); err != nil {
-		return fmt.Errorf("create agent schema: %w", err)
 	}
 
 	return nil
@@ -51,10 +47,16 @@ func (repository Repository) StartRun(ctx context.Context, message string) (Run,
 		Status:    RunStatusRunning,
 		StartedAt: time.Now().UTC(),
 	}
-	if _, err := repository.database.Exec(ctx, `
-INSERT INTO agent_runs (id, message, status, started_at)
-VALUES ($1, $2, $3, $4)
-`, run.ID, run.Message, run.Status, run.StartedAt); err != nil {
+	record := database.AgentRun{
+		ID:            run.ID,
+		Message:       run.Message,
+		Status:        string(run.Status),
+		AnswerSummary: "",
+		OutputSummary: database.JSON([]byte(`{}`)),
+		ErrorSummary:  "",
+		StartedAt:     run.StartedAt,
+	}
+	if err := generated.AgentRunQueries[database.AgentRun](repository.database).Create(ctx, &record); err != nil {
 		return Run{}, fmt.Errorf("start run: %w", err)
 	}
 
@@ -70,11 +72,12 @@ func (repository Repository) FinishRun(ctx context.Context, run Run) error {
 	if err != nil {
 		return fmt.Errorf("marshal output summary: %w", err)
 	}
-	if _, err := repository.database.Exec(ctx, `
+
+	if err := generated.AgentRunQueries[database.AgentRun](repository.database).Exec(ctx, `
 UPDATE agent_runs
-SET status = $2, answer_summary = $3, output_summary = $4, error_summary = $5, finished_at = $6
-WHERE id = $1
-`, run.ID, run.Status, RedactText(run.Answer), outputSummary, RedactText(run.ErrorSummary), time.Now().UTC()); err != nil {
+SET status = ?, answer_summary = ?, output_summary = ?, error_summary = ?, finished_at = ?
+WHERE id = ?
+`, string(run.Status), RedactText(run.Answer), database.JSON(outputSummary), RedactText(run.ErrorSummary), sql.NullTime{Time: time.Now().UTC(), Valid: true}, run.ID); err != nil {
 		return fmt.Errorf("finish run: %w", err)
 	}
 
@@ -86,53 +89,23 @@ func (repository Repository) SaveStep(ctx context.Context, step StepRecord) erro
 		return ErrDatabaseMissing
 	}
 
-	if _, err := repository.database.Exec(ctx, `
-INSERT INTO agent_run_steps (id, run_id, step_order, tool_name, input_summary, output_summary, duration_ms, status, error_summary, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-`,
-		newRuntimeID("step"),
-		step.RunID,
-		step.StepOrder,
-		step.ToolName,
-		[]byte(step.InputSummary),
-		[]byte(step.OutputSummary),
-		step.DurationMS,
-		step.Status,
-		RedactText(step.ErrorSummary),
-		time.Now().UTC(),
-	); err != nil {
+	record := database.AgentRunStep{
+		ID:            newRuntimeID("step"),
+		RunID:         step.RunID,
+		StepOrder:     step.StepOrder,
+		ToolName:      step.ToolName,
+		InputSummary:  database.JSON(step.InputSummary),
+		OutputSummary: database.JSON(step.OutputSummary),
+		DurationMS:    step.DurationMS,
+		Status:        string(step.Status),
+		ErrorSummary:  RedactText(step.ErrorSummary),
+		CreatedAt:     time.Now().UTC(),
+	}
+	if err := generated.AgentRunStepQueries[database.AgentRunStep](repository.database).Create(ctx, &record); err != nil {
 		return fmt.Errorf("save step: %w", err)
 	}
 
 	return nil
-}
-
-func schemaSQL() string {
-	return `
-CREATE TABLE IF NOT EXISTS agent_runs (
-	id text PRIMARY KEY,
-	message text NOT NULL,
-	status text NOT NULL,
-	answer_summary text NOT NULL DEFAULT '',
-	output_summary jsonb NOT NULL DEFAULT '{}'::jsonb,
-	error_summary text NOT NULL DEFAULT '',
-	started_at timestamptz NOT NULL,
-	finished_at timestamptz
-);
-
-CREATE TABLE IF NOT EXISTS agent_run_steps (
-	id text PRIMARY KEY,
-	run_id text NOT NULL REFERENCES agent_runs(id),
-	step_order integer NOT NULL,
-	tool_name text NOT NULL,
-	input_summary jsonb NOT NULL,
-	output_summary jsonb NOT NULL,
-	duration_ms integer NOT NULL,
-	status text NOT NULL,
-	error_summary text NOT NULL DEFAULT '',
-	created_at timestamptz NOT NULL
-);
-`
 }
 
 func newRuntimeID(prefix string) string {

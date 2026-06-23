@@ -55,8 +55,10 @@ linters:
             - $gostd
             - orderbuddy-ai/backend
             - github.com/gofiber/fiber/v3
-            - github.com/jackc/pgx/v5
             - github.com/openai/openai-go/v3
+            - gorm.io/cli/gorm
+            - gorm.io/driver/sqlite
+            - gorm.io/gorm
 
     dupl:
       threshold: 100
@@ -100,8 +102,10 @@ linters:
       allowed:
         modules:
           - github.com/gofiber/fiber/v3
-          - github.com/jackc/pgx/v5
           - github.com/openai/openai-go/v3
+          - gorm.io/cli/gorm
+          - gorm.io/driver/sqlite
+          - gorm.io/gorm
       blocked:
         local-replace-directives: true
 

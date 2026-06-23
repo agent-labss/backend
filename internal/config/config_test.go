@@ -24,13 +24,15 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("APP_ENV", "test")
 	t.Setenv("HTTP_ADDR", ":9090")
-	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5433/custom?sslmode=disable")
+	t.Setenv("DATABASE_DRIVER", "sqlite")
+	t.Setenv("DATABASE_URL", "custom.db")
 
 	cfg := Load()
 	want := defaultConfig()
 	want.AppEnv = "test"
 	want.HTTPAddr = ":9090"
-	want.DatabaseURL = "postgres://user:pass@localhost:5433/custom?sslmode=disable"
+	want.DatabaseDriver = "sqlite"
+	want.DatabaseURL = "custom.db"
 
 	assertConfig(t, cfg, want)
 }
@@ -74,6 +76,7 @@ func clearEnv(t *testing.T) {
 
 	t.Setenv("APP_ENV", "")
 	t.Setenv("HTTP_ADDR", "")
+	t.Setenv("DATABASE_DRIVER", "")
 	t.Setenv("DATABASE_URL", "")
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("OPENAI_MODEL", "")
@@ -88,6 +91,7 @@ func defaultConfig() Config {
 	return Config{
 		AppEnv:                 DefaultAppEnv,
 		HTTPAddr:               DefaultHTTPAddr,
+		DatabaseDriver:         DefaultDatabaseDriver,
 		DatabaseURL:            DefaultDatabaseURL,
 		OpenAIAPIKey:           "",
 		OpenAIModel:            DefaultOpenAIModel,

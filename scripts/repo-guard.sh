@@ -25,9 +25,11 @@ echo "checking direct dependencies"
 direct_deps="$(go list -m -f '{{if not .Indirect}}{{.Path}}{{end}}' all | sed '/^$/d' | sort)"
 allowed_direct_deps="$(printf '%s\n' \
   'github.com/gofiber/fiber/v3' \
-  'github.com/jackc/pgx/v5' \
   'github.com/openai/openai-go/v3' \
   'orderbuddy-ai/backend' \
+  'gorm.io/cli/gorm' \
+  'gorm.io/driver/sqlite' \
+  'gorm.io/gorm' \
   | sort)"
 unexpected_deps="$(comm -23 <(printf '%s\n' "${direct_deps}") <(printf '%s\n' "${allowed_direct_deps}"))"
 if [[ -n "${unexpected_deps}" ]]; then
@@ -52,8 +54,12 @@ allowed_packages="$(printf '%s\n' \
   'orderbuddy-ai/backend/internal/app' \
   'orderbuddy-ai/backend/internal/architecture' \
   'orderbuddy-ai/backend/internal/config' \
+  'orderbuddy-ai/backend/internal/database' \
+  'orderbuddy-ai/backend/internal/database/generated' \
+  'orderbuddy-ai/backend/internal/database/queryinput' \
   'orderbuddy-ai/backend/internal/httpapi' \
-  'orderbuddy-ai/backend/internal/platform/postgres' \
+  'orderbuddy-ai/backend/internal/platform/db' \
+  'orderbuddy-ai/backend/internal/platform/sqlite' \
   'orderbuddy-ai/backend/internal/status' \
   'orderbuddy-ai/backend/internal/toolcatalog' \
   | sort)"

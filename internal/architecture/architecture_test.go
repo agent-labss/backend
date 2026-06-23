@@ -19,8 +19,12 @@ var allowedPackages = []string{
 	modulePath + "/internal/app",
 	modulePath + "/internal/architecture",
 	modulePath + "/internal/config",
+	modulePath + "/internal/database",
+	modulePath + "/internal/database/generated",
+	modulePath + "/internal/database/queryinput",
 	modulePath + "/internal/httpapi",
-	modulePath + "/internal/platform/postgres",
+	modulePath + "/internal/platform/db",
+	modulePath + "/internal/platform/sqlite",
 	modulePath + "/internal/status",
 	modulePath + "/internal/toolcatalog",
 }
@@ -43,24 +47,33 @@ func TestPackagesRemainExplicitlyAllowed(t *testing.T) {
 func TestPackageBoundaries(t *testing.T) {
 	packages := loadPackages(t)
 
-	assertDoesNotImport(t, packages, modulePath+"/internal/httpapi", modulePath+"/internal/platform/postgres")
+	assertDoesNotImport(t, packages, modulePath+"/internal/httpapi", modulePath+"/internal/platform/sqlite")
 	assertDoesNotImport(t, packages, modulePath+"/internal/status", modulePath+"/internal/httpapi")
-	assertDoesNotImport(t, packages, modulePath+"/internal/status", modulePath+"/internal/platform/postgres")
-	assertDoesNotImport(t, packages, modulePath+"/internal/platform/postgres", modulePath+"/internal/httpapi")
-	assertDoesNotImport(t, packages, modulePath+"/internal/platform/postgres", modulePath+"/internal/status")
+	assertDoesNotImport(t, packages, modulePath+"/internal/status", modulePath+"/internal/platform/db")
+	assertDoesNotImport(t, packages, modulePath+"/internal/status", modulePath+"/internal/platform/sqlite")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/db", modulePath+"/internal/httpapi")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/db", modulePath+"/internal/status")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/sqlite", modulePath+"/internal/httpapi")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/sqlite", modulePath+"/internal/status")
 	assertDoesNotImport(t, packages, modulePath+"/internal/toolcatalog", modulePath+"/internal/agent")
 	assertDoesNotImport(t, packages, modulePath+"/internal/toolcatalog", modulePath+"/internal/httpapi")
-	assertDoesNotImport(t, packages, modulePath+"/internal/toolcatalog", modulePath+"/internal/platform/postgres")
+	assertDoesNotImport(t, packages, modulePath+"/internal/toolcatalog", modulePath+"/internal/platform/db")
+	assertDoesNotImport(t, packages, modulePath+"/internal/toolcatalog", modulePath+"/internal/platform/sqlite")
 	assertDoesNotImport(t, packages, modulePath+"/internal/agent", modulePath+"/internal/httpapi")
-	assertDoesNotImport(t, packages, modulePath+"/internal/agent", modulePath+"/internal/platform/postgres")
-	assertDoesNotImport(t, packages, modulePath+"/internal/platform/postgres", modulePath+"/internal/agent")
-	assertDoesNotImport(t, packages, modulePath+"/internal/platform/postgres", modulePath+"/internal/toolcatalog")
+	assertDoesNotImport(t, packages, modulePath+"/internal/agent", modulePath+"/internal/platform/db")
+	assertDoesNotImport(t, packages, modulePath+"/internal/agent", modulePath+"/internal/platform/sqlite")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/db", modulePath+"/internal/agent")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/db", modulePath+"/internal/toolcatalog")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/sqlite", modulePath+"/internal/agent")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/sqlite", modulePath+"/internal/toolcatalog")
 	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/app")
 	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/httpapi")
-	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/platform/postgres")
+	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/platform/db")
+	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/platform/sqlite")
 	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/status")
 	assertDoesNotImport(t, packages, modulePath+"/cmd/server", modulePath+"/internal/httpapi")
-	assertDoesNotImport(t, packages, modulePath+"/cmd/server", modulePath+"/internal/platform/postgres")
+	assertDoesNotImport(t, packages, modulePath+"/cmd/server", modulePath+"/internal/platform/db")
+	assertDoesNotImport(t, packages, modulePath+"/cmd/server", modulePath+"/internal/platform/sqlite")
 	assertDoesNotImport(t, packages, modulePath+"/cmd/server", modulePath+"/internal/status")
 }
 

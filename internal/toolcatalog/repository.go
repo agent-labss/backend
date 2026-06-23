@@ -5,40 +5,32 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/gorm"
+
+	"orderbuddy-ai/backend/internal/database"
+	"orderbuddy-ai/backend/internal/database/generated"
 )
-
-const uniqueViolationCode = "23505"
 
 var ErrDatabaseMissing = errors.New("tool catalog database is missing")
 
-type database interface {
-	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}
-
 type Repository struct {
-	database database
+	database *gorm.DB
 }
 
-func NewRepository(pool *pgxpool.Pool) Repository {
-	if pool == nil {
+func NewRepository(db *gorm.DB) Repository {
+	if db == nil {
 		return Repository{}
 	}
 
-	return Repository{database: pool}
+	return Repository{database: db}
 }
 
-func (repository Repository) CreateSchema(ctx context.Context) error {
+func (repository Repository) CreateSchema(context.Context) error {
 	if repository.database == nil {
 		return ErrDatabaseMissing
-	}
-	if _, err := repository.database.Exec(ctx, schemaSQL()); err != nil {
-		return fmt.Errorf("create tool catalog schema: %w", err)
 	}
 
 	return nil
@@ -49,31 +41,16 @@ func (repository Repository) SaveTool(ctx context.Context, tool Tool) (Tool, err
 		return Tool{}, ErrDatabaseMissing
 	}
 
-	row := repository.database.QueryRow(ctx, `
-INSERT INTO tools (name, description, command_path, input_schema, output_schema, timeout_ms, requires_service_account, status)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id::text, name, description, command_path, input_schema, output_schema, timeout_ms, requires_service_account, status, created_at, updated_at
-`,
-		tool.Name,
-		tool.Description,
-		tool.CommandPath,
-		[]byte(tool.InputSchema),
-		[]byte(tool.OutputSchema),
-		tool.TimeoutMS,
-		tool.RequiresServiceAccount,
-		tool.NormalizedStatus(),
-	)
-
-	saved, err := scanTool(row)
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationCode {
+	record := toolRecord(tool)
+	queries := generated.ToolQueries[database.Tool](repository.database)
+	if err := queries.Create(ctx, &record); err != nil {
+		if isUniqueConstraintError(err) {
 			return Tool{}, ErrDuplicateToolName
 		}
 		return Tool{}, fmt.Errorf("save tool: %w", err)
 	}
 
-	return saved, nil
+	return toolFromRecord(record), nil
 }
 
 func (repository Repository) ListEnabledTools(ctx context.Context) ([]Tool, error) {
@@ -81,20 +58,14 @@ func (repository Repository) ListEnabledTools(ctx context.Context) ([]Tool, erro
 		return nil, ErrDatabaseMissing
 	}
 
-	rows, err := repository.database.Query(ctx, `
-SELECT id::text, name, description, command_path, input_schema, output_schema, timeout_ms, requires_service_account, status, created_at, updated_at
-FROM tools
-WHERE status = $1
-ORDER BY name
-`, ToolStatusEnabled)
+	records, err := generated.ToolQueries[database.Tool](repository.database).ListByStatus(ctx, string(ToolStatusEnabled))
 	if err != nil {
 		return nil, fmt.Errorf("list enabled tools: %w", err)
 	}
-	defer rows.Close()
 
-	tools, err := scanTools(rows)
-	if err != nil {
-		return nil, err
+	tools := make([]Tool, 0, len(records))
+	for _, record := range records {
+		tools = append(tools, toolFromRecord(record))
 	}
 
 	return tools, nil
@@ -105,20 +76,16 @@ func (repository Repository) UpdateInstructions(ctx context.Context, instruction
 		return Instructions{}, ErrDatabaseMissing
 	}
 
-	row := repository.database.QueryRow(ctx, `
-INSERT INTO agent_instructions (id, content)
-VALUES (1, $1)
-ON CONFLICT (id)
-DO UPDATE SET content = EXCLUDED.content, updated_at = now()
-RETURNING content, updated_at
-`, instructions.Content)
-
-	var saved Instructions
-	if err := row.Scan(&saved.Content, &saved.UpdatedAt); err != nil {
+	record := database.AgentInstruction{
+		ID:        1,
+		Content:   instructions.Content,
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := repository.database.WithContext(ctx).Save(&record).Error; err != nil {
 		return Instructions{}, fmt.Errorf("update agent instructions: %w", err)
 	}
 
-	return saved, nil
+	return instructionsFromRecord(record), nil
 }
 
 func (repository Repository) GetInstructions(ctx context.Context) (Instructions, error) {
@@ -126,82 +93,61 @@ func (repository Repository) GetInstructions(ctx context.Context) (Instructions,
 		return Instructions{}, ErrDatabaseMissing
 	}
 
-	row := repository.database.QueryRow(ctx, `SELECT content, updated_at FROM agent_instructions WHERE id = 1`)
-
-	var instructions Instructions
-	if err := row.Scan(&instructions.Content, &instructions.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+	record, err := generated.AgentInstructionQueries[database.AgentInstruction](repository.database).GetByID(ctx, 1)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return Instructions{}, ErrInstructionsNotFound
 		}
 		return Instructions{}, fmt.Errorf("get agent instructions: %w", err)
 	}
 
-	return instructions, nil
+	return instructionsFromRecord(record), nil
 }
 
-func scanTools(rows pgx.Rows) ([]Tool, error) {
-	var tools []Tool
-	for rows.Next() {
-		tool, err := scanTool(rows)
-		if err != nil {
-			return nil, err
-		}
-		tools = append(tools, tool)
+func toolRecord(tool Tool) database.Tool {
+	now := time.Now().UTC()
+	return database.Tool{
+		ID:                     newRecordID("tool"),
+		Name:                   tool.Name,
+		Description:            tool.Description,
+		CommandPath:            tool.CommandPath,
+		InputSchema:            database.JSON(tool.InputSchema),
+		OutputSchema:           database.JSON(tool.OutputSchema),
+		TimeoutMS:              tool.TimeoutMS,
+		RequiresServiceAccount: tool.RequiresServiceAccount,
+		Status:                 string(tool.NormalizedStatus()),
+		CreatedAt:              now,
+		UpdatedAt:              now,
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate tools: %w", err)
-	}
-
-	return tools, nil
 }
 
-func scanTool(row pgx.Row) (Tool, error) {
-	var tool Tool
-	var inputSchema []byte
-	var outputSchema []byte
-	if err := row.Scan(
-		&tool.ID,
-		&tool.Name,
-		&tool.Description,
-		&tool.CommandPath,
-		&inputSchema,
-		&outputSchema,
-		&tool.TimeoutMS,
-		&tool.RequiresServiceAccount,
-		&tool.Status,
-		&tool.CreatedAt,
-		&tool.UpdatedAt,
-	); err != nil {
-		return Tool{}, fmt.Errorf("scan tool: %w", err)
+func toolFromRecord(record database.Tool) Tool {
+	return Tool{
+		ID:                     record.ID,
+		Name:                   record.Name,
+		Description:            record.Description,
+		CommandPath:            record.CommandPath,
+		InputSchema:            json.RawMessage(record.InputSchema),
+		OutputSchema:           json.RawMessage(record.OutputSchema),
+		TimeoutMS:              record.TimeoutMS,
+		RequiresServiceAccount: record.RequiresServiceAccount,
+		Status:                 ToolStatus(record.Status),
+		CreatedAt:              record.CreatedAt,
+		UpdatedAt:              record.UpdatedAt,
 	}
-	tool.InputSchema = json.RawMessage(inputSchema)
-	tool.OutputSchema = json.RawMessage(outputSchema)
-
-	return tool, nil
 }
 
-func schemaSQL() string {
-	return `
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+func instructionsFromRecord(record database.AgentInstruction) Instructions {
+	return Instructions{
+		Content:   record.Content,
+		UpdatedAt: record.UpdatedAt,
+	}
+}
 
-CREATE TABLE IF NOT EXISTS tools (
-	id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-	name text NOT NULL UNIQUE,
-	description text NOT NULL,
-	command_path text NOT NULL,
-	input_schema jsonb NOT NULL,
-	output_schema jsonb NOT NULL,
-	timeout_ms integer NOT NULL,
-	requires_service_account boolean NOT NULL DEFAULT false,
-	status text NOT NULL,
-	created_at timestamptz NOT NULL DEFAULT now(),
-	updated_at timestamptz NOT NULL DEFAULT now()
-);
+func newRecordID(prefix string) string {
+	return fmt.Sprintf("%s_%d", prefix, time.Now().UTC().UnixNano())
+}
 
-CREATE TABLE IF NOT EXISTS agent_instructions (
-	id integer PRIMARY KEY,
-	content text NOT NULL,
-	updated_at timestamptz NOT NULL DEFAULT now()
-);
-`
+func isUniqueConstraintError(err error) bool {
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }

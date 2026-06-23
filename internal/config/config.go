@@ -8,7 +8,8 @@ import (
 const (
 	DefaultAppEnv              = "development"
 	DefaultHTTPAddr            = ":8080"
-	DefaultDatabaseURL         = "postgres://orderbuddy_ai:orderbuddy_ai@localhost:5432/orderbuddy_ai?sslmode=disable"
+	DefaultDatabaseDriver      = "sqlite"
+	DefaultDatabaseURL         = "orderbuddy_ai.db"
 	DefaultOpenAIModel         = "gpt-5-mini"
 	DefaultTrustedToolDir      = "./tools"
 	DefaultAgentMaxSteps       = 8
@@ -18,6 +19,7 @@ const (
 type Config struct {
 	AppEnv                 string
 	HTTPAddr               string
+	DatabaseDriver         string
 	DatabaseURL            string
 	OpenAIAPIKey           string
 	OpenAIModel            string
@@ -32,6 +34,7 @@ func Load() Config {
 	return Config{
 		AppEnv:                 getEnv("APP_ENV", DefaultAppEnv),
 		HTTPAddr:               getEnv("HTTP_ADDR", DefaultHTTPAddr),
+		DatabaseDriver:         getEnv("DATABASE_DRIVER", DefaultDatabaseDriver),
 		DatabaseURL:            getEnv("DATABASE_URL", DefaultDatabaseURL),
 		OpenAIAPIKey:           getEnv("OPENAI_API_KEY", ""),
 		OpenAIModel:            getEnv("OPENAI_MODEL", DefaultOpenAIModel),

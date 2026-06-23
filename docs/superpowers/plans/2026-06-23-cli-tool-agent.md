@@ -82,7 +82,7 @@ Use package-owned constants rather than repeated strings:
 - Modify: `scripts/repo-guard.sh`
 - Modify: `internal/architecture/architecture_test.go`
 
-- [ ] **Step 1: Write failing architecture allowlist expectations**
+- [x] **Step 1: Write failing architecture allowlist expectations**
 
 In `internal/architecture/architecture_test.go`, add the approved packages to `allowedPackages`:
 
@@ -105,7 +105,7 @@ assertDoesNotImport(t, packages, modulePath+"/internal/platform/postgres", modul
 
 Rationale: domain packages may define repository types that accept pgx interfaces, but platform postgres remains only connectivity and must not import domains. Handlers may live in domain packages and import Fiber, matching the existing `internal/status` pattern.
 
-- [ ] **Step 2: Update repo guard package allowlist**
+- [x] **Step 2: Update repo guard package allowlist**
 
 In `scripts/repo-guard.sh`, add these allowed packages:
 
@@ -114,7 +114,7 @@ In `scripts/repo-guard.sh`, add these allowed packages:
   'orderbuddy-ai/backend/internal/toolcatalog' \
 ```
 
-- [ ] **Step 3: Allow the OpenAI SDK in repo guard**
+- [x] **Step 3: Allow the OpenAI SDK in repo guard**
 
 In `scripts/repo-guard.sh`, add the direct dependency to `allowed_direct_deps`:
 
@@ -122,7 +122,7 @@ In `scripts/repo-guard.sh`, add the direct dependency to `allowed_direct_deps`:
   'github.com/openai/openai-go/v3' \
 ```
 
-- [ ] **Step 4: Run architecture tests**
+- [x] **Step 4: Run architecture tests**
 
 Run:
 
@@ -132,7 +132,7 @@ go test ./internal/architecture
 
 Expected: `ok orderbuddy-ai/backend/internal/architecture`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/repo-guard.sh internal/architecture/architecture_test.go

@@ -2976,7 +2976,7 @@ git commit -m "Add controlled agent loop"
 - Create: `internal/agent/handler.go`
 - Create: `internal/agent/handler_test.go`
 
-- [ ] **Step 1: Write handler tests**
+- [x] **Step 1: Write handler tests**
 
 Create `internal/agent/handler_test.go`:
 
@@ -3055,7 +3055,7 @@ func TestHandlerCreateRunRejectsBadJSON(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -3065,7 +3065,7 @@ go test ./internal/agent
 
 Expected: fail because handler does not exist.
 
-- [ ] **Step 3: Implement handler**
+- [x] **Step 3: Implement handler**
 
 Create `internal/agent/handler.go`:
 
@@ -3111,7 +3111,7 @@ func (handler Handler) CreateRun(c fiber.Ctx) error {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run:
 
@@ -3121,7 +3121,7 @@ go test ./internal/agent
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/agent/handler.go internal/agent/handler_test.go

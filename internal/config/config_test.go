@@ -3,37 +3,106 @@ package config
 import "testing"
 
 func TestLoadUsesDefaults(t *testing.T) {
-	t.Setenv("APP_ENV", "")
-	t.Setenv("HTTP_ADDR", "")
-	t.Setenv("DATABASE_URL", "")
+	clearEnv(t)
 
 	cfg := Load()
+	want := defaultConfig()
 
-	if cfg.AppEnv != DefaultAppEnv {
-		t.Fatalf("AppEnv = %q, want %q", cfg.AppEnv, DefaultAppEnv)
-	}
-	if cfg.HTTPAddr != DefaultHTTPAddr {
-		t.Fatalf("HTTPAddr = %q, want %q", cfg.HTTPAddr, DefaultHTTPAddr)
-	}
-	if cfg.DatabaseURL != DefaultDatabaseURL {
-		t.Fatalf("DatabaseURL = %q, want %q", cfg.DatabaseURL, DefaultDatabaseURL)
-	}
+	assertConfig(t, cfg, want)
+}
+
+func TestLoadUsesAgentDefaults(t *testing.T) {
+	clearEnv(t)
+
+	cfg := Load()
+	want := defaultConfig()
+
+	assertConfig(t, cfg, want)
 }
 
 func TestLoadUsesEnvironmentOverrides(t *testing.T) {
+	clearEnv(t)
 	t.Setenv("APP_ENV", "test")
 	t.Setenv("HTTP_ADDR", ":9090")
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5433/custom?sslmode=disable")
 
 	cfg := Load()
+	want := defaultConfig()
+	want.AppEnv = "test"
+	want.HTTPAddr = ":9090"
+	want.DatabaseURL = "postgres://user:pass@localhost:5433/custom?sslmode=disable"
 
-	if cfg.AppEnv != "test" {
-		t.Fatalf("AppEnv = %q, want test", cfg.AppEnv)
+	assertConfig(t, cfg, want)
+}
+
+func TestLoadUsesAgentEnvironmentOverrides(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	t.Setenv("OPENAI_MODEL", "gpt-5-mini")
+	t.Setenv("TRUSTED_TOOL_DIR", "/opt/orderbuddy-tools")
+	t.Setenv("INTERNAL_REPORT_USERNAME", "svc-user")
+	t.Setenv("INTERNAL_REPORT_PASSWORD", "svc-pass")
+	t.Setenv("AGENT_MAX_STEPS", "12")
+	t.Setenv("AGENT_TOTAL_TIMEOUT_MS", "90000")
+
+	cfg := Load()
+	want := defaultConfig()
+	want.OpenAIAPIKey = "sk-test"
+	want.OpenAIModel = "gpt-5-mini"
+	want.TrustedToolDir = "/opt/orderbuddy-tools"
+	want.InternalReportUsername = "svc-user"
+	want.InternalReportPassword = "svc-pass"
+	want.AgentMaxSteps = 12
+	want.AgentTotalTimeoutMS = 90000
+
+	assertConfig(t, cfg, want)
+}
+
+func TestLoadFallsBackForInvalidAgentNumbers(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("AGENT_MAX_STEPS", "invalid")
+	t.Setenv("AGENT_TOTAL_TIMEOUT_MS", "-1")
+
+	cfg := Load()
+	want := defaultConfig()
+
+	assertConfig(t, cfg, want)
+}
+
+func clearEnv(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("APP_ENV", "")
+	t.Setenv("HTTP_ADDR", "")
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENAI_MODEL", "")
+	t.Setenv("TRUSTED_TOOL_DIR", "")
+	t.Setenv("INTERNAL_REPORT_USERNAME", "")
+	t.Setenv("INTERNAL_REPORT_PASSWORD", "")
+	t.Setenv("AGENT_MAX_STEPS", "")
+	t.Setenv("AGENT_TOTAL_TIMEOUT_MS", "")
+}
+
+func defaultConfig() Config {
+	return Config{
+		AppEnv:                 DefaultAppEnv,
+		HTTPAddr:               DefaultHTTPAddr,
+		DatabaseURL:            DefaultDatabaseURL,
+		OpenAIAPIKey:           "",
+		OpenAIModel:            DefaultOpenAIModel,
+		TrustedToolDir:         DefaultTrustedToolDir,
+		InternalReportUsername: "",
+		InternalReportPassword: "",
+		AgentMaxSteps:          DefaultAgentMaxSteps,
+		AgentTotalTimeoutMS:    DefaultAgentTotalTimeoutMS,
 	}
-	if cfg.HTTPAddr != ":9090" {
-		t.Fatalf("HTTPAddr = %q, want :9090", cfg.HTTPAddr)
-	}
-	if cfg.DatabaseURL != "postgres://user:pass@localhost:5433/custom?sslmode=disable" {
-		t.Fatalf("DatabaseURL = %q, want override value", cfg.DatabaseURL)
+}
+
+func assertConfig(t *testing.T, got Config, want Config) {
+	t.Helper()
+
+	if got != want {
+		t.Fatalf("Load() = %+v, want %+v", got, want)
 	}
 }

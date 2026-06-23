@@ -145,7 +145,7 @@ git commit -m "Allow CLI tool agent boundaries"
 - Modify: `internal/config/config.go`
 - Modify: `internal/config/config_test.go`
 
-- [ ] **Step 1: Write failing config tests**
+- [x] **Step 1: Write failing config tests**
 
 Add to `internal/config/config_test.go`:
 
@@ -236,7 +236,7 @@ func TestLoadFallsBackForInvalidAgentNumbers(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -246,7 +246,7 @@ go test ./internal/config
 
 Expected: fail because the new config fields and constants do not exist.
 
-- [ ] **Step 3: Implement config fields and parsing**
+- [x] **Step 3: Implement config fields and parsing**
 
 Update `internal/config/config.go`:
 
@@ -320,7 +320,7 @@ func getPositiveIntEnv(key string, fallback int) int {
 }
 ```
 
-- [ ] **Step 4: Run config tests**
+- [x] **Step 4: Run config tests**
 
 Run:
 
@@ -330,7 +330,7 @@ go test ./internal/config
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/config/config.go internal/config/config_test.go

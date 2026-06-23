@@ -3135,7 +3135,7 @@ git commit -m "Add agent run handler"
 - Modify: `internal/httpapi/router_test.go`
 - Modify: `internal/httpapi/middleware.go`
 
-- [ ] **Step 1: Update router tests**
+- [x] **Step 1: Update router tests**
 
 In `internal/httpapi/router_test.go`, add the Fiber import:
 
@@ -3219,7 +3219,7 @@ if got := resp.Header.Get(headerAccessControlAllowMethods); got != corsAllowedMe
 }
 ```
 
-- [ ] **Step 2: Run router tests to verify failure**
+- [x] **Step 2: Run router tests to verify failure**
 
 Run:
 
@@ -3229,7 +3229,7 @@ go test ./internal/httpapi
 
 Expected: fail because `RouterConfig` does not include tool or agent handlers and CORS does not allow POST/PUT.
 
-- [ ] **Step 3: Update CORS methods**
+- [x] **Step 3: Update CORS methods**
 
 In `internal/httpapi/middleware.go`, change:
 
@@ -3243,7 +3243,7 @@ to:
 corsAllowedMethods = "GET, POST, PUT, OPTIONS"
 ```
 
-- [ ] **Step 4: Update router config and routes**
+- [x] **Step 4: Update router config and routes**
 
 In `internal/httpapi/router.go`, define small route interfaces and register routes:
 
@@ -3298,7 +3298,7 @@ func NewRouter(config RouterConfig) *fiber.App {
 }
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 
@@ -3308,7 +3308,7 @@ go test ./internal/httpapi
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/httpapi/router.go internal/httpapi/router_test.go internal/httpapi/middleware.go

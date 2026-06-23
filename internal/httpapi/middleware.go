@@ -12,7 +12,7 @@ const (
 	headerAccessControlAllowMethods = "Access-Control-Allow-Methods"
 	headerContentType               = "Content-Type"
 	corsAllowedOrigin               = "*"
-	corsAllowedMethods              = "GET, OPTIONS"
+	corsAllowedMethods              = "GET, POST, PUT, OPTIONS"
 )
 
 func withCORS(c fiber.Ctx) error {

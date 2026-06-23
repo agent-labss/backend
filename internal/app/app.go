@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -17,7 +18,7 @@ import (
 func Run(cfg config.Config) error {
 	pool, err := postgres.Connect(context.Background(), cfg.DatabaseURL)
 	if err != nil {
-		return err
+		return fmt.Errorf("connect postgres: %w", err)
 	}
 	defer pool.Close()
 
@@ -38,11 +39,15 @@ func Run(cfg config.Config) error {
 	select {
 	case <-stop:
 	case err := <-listenErr:
-		return err
+		return fmt.Errorf("listen http: %w", err)
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	return router.ShutdownWithContext(shutdownCtx)
+	if err := router.ShutdownWithContext(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown http: %w", err)
+	}
+
+	return nil
 }

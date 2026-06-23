@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -10,7 +11,7 @@ import (
 func Connect(parent context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse postgres config: %w", err)
 	}
 
 	config.MaxConns = 5
@@ -23,12 +24,12 @@ func Connect(parent context.Context, databaseURL string) (*pgxpool.Pool, error) 
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create postgres pool: %w", err)
 	}
 
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		return nil, err
+		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
 	return pool, nil

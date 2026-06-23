@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -10,6 +11,9 @@ func TestConnectRejectsInvalidDatabaseURL(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("expected error for invalid database URL")
+	}
+	if !strings.Contains(err.Error(), "parse postgres config:") {
+		t.Fatalf("error = %q, want parse postgres context", err)
 	}
 	if pool != nil {
 		t.Fatal("expected nil pool for invalid database URL")

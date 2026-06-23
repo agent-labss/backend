@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/gofiber/fiber/v3 v3.3.0
 	github.com/jackc/pgx/v5 v5.7.6
+	github.com/openai/openai-go/v3 v3.41.0
 )
 
 require (
@@ -18,7 +19,6 @@ require (
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
-	github.com/openai/openai-go/v3 v3.41.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect

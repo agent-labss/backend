@@ -2234,7 +2234,7 @@ git commit -m "Add agent planner boundary"
 - Create: `internal/agent/repository.go`
 - Create: `internal/agent/repository_test.go`
 
-- [ ] **Step 1: Write repository tests**
+- [x] **Step 1: Write repository tests**
 
 Create `internal/agent/repository_test.go`:
 
@@ -2271,7 +2271,7 @@ func TestRepositorySchemaContainsTables(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -2281,7 +2281,7 @@ go test ./internal/agent
 
 Expected: fail because repository does not exist.
 
-- [ ] **Step 3: Implement repository**
+- [x] **Step 3: Implement repository**
 
 Create `internal/agent/repository.go`:
 
@@ -2423,7 +2423,7 @@ CREATE TABLE IF NOT EXISTS agent_run_steps (
 }
 ```
 
-- [ ] **Step 4: Add runtime ID helper**
+- [x] **Step 4: Add runtime ID helper**
 
 Append to `internal/agent/repository.go`:
 
@@ -2433,7 +2433,7 @@ func newRuntimeID(prefix string) string {
 }
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 
@@ -2443,7 +2443,7 @@ go test ./internal/agent
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/agent/repository.go internal/agent/repository_test.go

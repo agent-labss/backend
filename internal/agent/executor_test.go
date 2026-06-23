@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"orderbuddy-ai/backend/internal/toolcatalog"
+	"ai/backend/internal/toolcatalog"
 )
 
 const (

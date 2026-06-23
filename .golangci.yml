@@ -53,7 +53,7 @@ linters:
             - "$all"
           allow:
             - $gostd
-            - orderbuddy-ai/backend
+            - ai/backend
             - github.com/gofiber/fiber/v3
             - github.com/openai/openai-go/v3
             - gorm.io/cli/gorm

@@ -9,14 +9,8 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
-	"orderbuddy-ai/backend/internal/database"
+	"ai/backend/internal/database"
 )
-
-type Connector struct{}
-
-func (Connector) Connect(parent context.Context, databaseURL string) (*gorm.DB, error) {
-	return Connect(parent, databaseURL)
-}
 
 func Connect(parent context.Context, databaseURL string) (*gorm.DB, error) {
 	db, err := gorm.Open(sqlite.Open(databaseURL), &gorm.Config{})

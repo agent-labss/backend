@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"orderbuddy-ai/backend/internal/toolcatalog"
+	"ai/backend/internal/toolcatalog"
 )
 
 var (

@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"time"
 
-	"orderbuddy-ai/backend/internal/toolcatalog"
+	"ai/backend/internal/toolcatalog"
 )
 
 var ErrToolExecutionFailed = errors.New("tool execution failed")

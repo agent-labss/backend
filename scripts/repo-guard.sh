@@ -26,7 +26,7 @@ direct_deps="$(go list -m -f '{{if not .Indirect}}{{.Path}}{{end}}' all | sed '/
 allowed_direct_deps="$(printf '%s\n' \
   'github.com/gofiber/fiber/v3' \
   'github.com/openai/openai-go/v3' \
-  'orderbuddy-ai/backend' \
+  'ai/backend' \
   'gorm.io/cli/gorm' \
   'gorm.io/driver/sqlite' \
   'gorm.io/gorm' \
@@ -49,19 +49,19 @@ fi
 echo "checking package allowlist"
 packages="$(go list ./... | sort)"
 allowed_packages="$(printf '%s\n' \
-  'orderbuddy-ai/backend/cmd/server' \
-  'orderbuddy-ai/backend/internal/agent' \
-  'orderbuddy-ai/backend/internal/app' \
-  'orderbuddy-ai/backend/internal/architecture' \
-  'orderbuddy-ai/backend/internal/config' \
-  'orderbuddy-ai/backend/internal/database' \
-  'orderbuddy-ai/backend/internal/database/generated' \
-  'orderbuddy-ai/backend/internal/database/queryinput' \
-  'orderbuddy-ai/backend/internal/httpapi' \
-  'orderbuddy-ai/backend/internal/platform/db' \
-  'orderbuddy-ai/backend/internal/platform/sqlite' \
-  'orderbuddy-ai/backend/internal/status' \
-  'orderbuddy-ai/backend/internal/toolcatalog' \
+  'ai/backend/cmd/server' \
+  'ai/backend/internal/agent' \
+  'ai/backend/internal/app' \
+  'ai/backend/internal/architecture' \
+  'ai/backend/internal/config' \
+  'ai/backend/internal/database' \
+  'ai/backend/internal/database/generated' \
+  'ai/backend/internal/database/queryinput' \
+  'ai/backend/internal/httpapi' \
+  'ai/backend/internal/platform/datastore' \
+  'ai/backend/internal/platform/sqlite' \
+  'ai/backend/internal/status' \
+  'ai/backend/internal/toolcatalog' \
   | sort)"
 unexpected_packages="$(comm -23 <(printf '%s\n' "${packages}") <(printf '%s\n' "${allowed_packages}"))"
 if [[ -n "${unexpected_packages}" ]]; then

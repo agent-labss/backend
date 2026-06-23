@@ -1,4 +1,4 @@
-module orderbuddy-ai/backend
+module ai/backend
 
 go 1.25.0
 

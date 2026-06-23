@@ -7,7 +7,7 @@ import (
 )
 
 func TestConnectRejectsInvalidDatabaseURL(t *testing.T) {
-	db, err := Connect(context.Background(), "/dev/null/orderbuddy_ai.db")
+	db, err := Connect(context.Background(), "/dev/null/ai.db")
 
 	if err == nil {
 		t.Fatal("expected error for invalid database URL")

@@ -4,13 +4,15 @@ Date: 2026-06-22
 
 ## Context
 
-This repository is a small Go backend module, `orderbuddy-ai/backend`. It has a deliberately simple structure:
+This repository is a small Go backend module, `ai/backend`. It has a deliberately simple structure:
 
 - `cmd/server` loads configuration and starts the application.
 - `internal/app` wires dependencies and graceful shutdown.
 - `internal/config` reads environment configuration.
 - `internal/httpapi` owns Fiber routes and HTTP middleware.
-- `internal/platform/postgres` owns PostgreSQL connectivity.
+- `internal/database` owns GORM models, GORM CLI query inputs, and generated query helpers.
+- `internal/platform/datastore` owns database driver selection, close, and ping adapters.
+- `internal/platform/sqlite` owns SQLite connectivity and migration.
 - `internal/status` owns health, readiness, and status behavior.
 
 The main risk is not syntax errors. The risk is local AI coding sessions producing maintainability debt: unnecessary dependencies, premature abstractions, package sprawl, stringly typed domain values, scattered constants, and cross-layer imports that make the repo harder to reason about.
@@ -88,10 +90,13 @@ Recommended linter groups:
 - Error discipline: `errorlint`, `errname`, `err113`, `nilerr`, `nilnil`, `wrapcheck`.
 - Suppression discipline: `nolintlint`.
 
-Initial direct dependency allowlist:
+Current direct dependency allowlist:
 
 - `github.com/gofiber/fiber/v3`
-- `github.com/jackc/pgx/v5`
+- `github.com/openai/openai-go/v3`
+- `gorm.io/cli/gorm`
+- `gorm.io/driver/sqlite`
+- `gorm.io/gorm`
 
 Every `//nolint` must name the specific linter and include a reason.
 
@@ -106,13 +111,15 @@ Every `//nolint` must name the specific linter and include a reason.
 - Package allowlist checks for `internal/`.
 - Temporary/generated file blacklist checks.
 
+`internal/database/generated` is intentionally committed generated code from GORM CLI, with `internal/database/queryinput` as its source interface package. It is part of the package allowlist; ad hoc generated or temporary files remain blocked.
+
 Architecture tests will be Go tests, so `go test ./...` catches architecture violations. They will validate:
 
-- `internal/httpapi` does not import `internal/platform/postgres`.
-- `internal/status` does not import `internal/httpapi` or `internal/platform/postgres`.
-- `internal/platform/postgres` does not import `internal/httpapi` or `internal/status`.
+- `internal/httpapi` does not import database platform packages.
+- `internal/status` does not import `internal/httpapi` or database platform packages.
+- Database platform packages do not import `internal/httpapi`, `internal/status`, `internal/agent`, or `internal/toolcatalog`.
 - `internal/config` does not import app, HTTP, status, or platform packages.
-- `cmd/server` only handles startup-level orchestration and does not directly wire router, postgres, or status internals.
+- `cmd/server` only handles startup-level orchestration and does not directly wire router, database, or status internals.
 - The allowed package list is explicit and must be updated when adding packages.
 
 ## Validation Flow

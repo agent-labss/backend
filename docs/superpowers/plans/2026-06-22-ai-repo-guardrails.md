@@ -8,6 +8,8 @@
 
 **Tech Stack:** Go 1.26.2, golangci-lint 2.9.0, Bash, Go standard library tests.
 
+> Current status: this historical plan originally targeted pgx/PostgreSQL. The current repository uses SQLite through GORM, keeps GORM CLI query inputs in `internal/database/queryinput`, generated helpers in `internal/database/generated`, and enforces `gorm.io/cli/gorm`, `gorm.io/driver/sqlite`, and `gorm.io/gorm` in the direct dependency allowlist.
+
 ---
 
 ## File Structure
@@ -23,7 +25,7 @@
 - Modify `internal/status/handler.go`: use status constants in JSON responses.
 - Modify `internal/status/*_test.go`, `internal/httpapi/router_test.go`: update tests to use constants/helpers and close response bodies with error checks.
 - Modify `internal/app/app.go`: wrap returned external errors.
-- Modify `internal/platform/postgres/postgres.go`: wrap pgx errors.
+- Modify `internal/platform/sqlite/sqlite.go`: wrap SQLite/GORM connection, ping, migration, and close errors.
 
 ## Task 1: Document AI Change Discipline
 
@@ -43,13 +45,15 @@ Do not add a new direct dependency, new `internal/` package, new architectural l
 
 Keep package ownership intact:
 - `cmd/server` loads config and calls `app.Run`.
-- `internal/app` wires config, postgres, status, and HTTP routing.
+- `internal/app` wires config, database, status, and HTTP routing.
 - `internal/config` reads environment settings only.
 - `internal/httpapi` owns Fiber routes, middleware, and HTTP helpers.
-- `internal/platform/postgres` owns PostgreSQL connectivity only.
+- `internal/database` owns GORM models, GORM CLI query inputs, and generated query helpers.
+- `internal/platform/datastore` owns database driver selection, close, and ping adapters only.
+- `internal/platform/sqlite` owns SQLite connectivity and migration only.
 - `internal/status` owns health/readiness/status behavior only.
 
-Do not bypass package boundaries. In particular, HTTP handlers must not import `internal/platform/postgres`, status logic must not import HTTP or postgres packages, and platform packages must not import application or HTTP packages.
+Do not bypass package boundaries. In particular, HTTP handlers must not import database platform packages, status logic must not import HTTP or platform packages, and platform packages must not import application or HTTP packages.
 
 Avoid stringly typed behavior. Route paths, repeated JSON field names, status strings, and enum-like values must be constants or typed constants in the package that owns them.
 
@@ -102,15 +106,19 @@ import (
 	"testing"
 )
 
-const modulePath = "orderbuddy-ai/backend"
+const modulePath = "ai/backend"
 
 var allowedPackages = []string{
 	modulePath + "/cmd/server",
 	modulePath + "/internal/app",
 	modulePath + "/internal/architecture",
 	modulePath + "/internal/config",
+	modulePath + "/internal/database",
+	modulePath + "/internal/database/generated",
+	modulePath + "/internal/database/queryinput",
 	modulePath + "/internal/httpapi",
-	modulePath + "/internal/platform/postgres",
+	modulePath + "/internal/platform/datastore",
+	modulePath + "/internal/platform/sqlite",
 	modulePath + "/internal/status",
 }
 
@@ -132,17 +140,23 @@ func TestPackagesRemainExplicitlyAllowed(t *testing.T) {
 func TestPackageBoundaries(t *testing.T) {
 	packages := loadPackages(t)
 
-	assertDoesNotImport(t, packages, modulePath+"/internal/httpapi", modulePath+"/internal/platform/postgres")
+	assertDoesNotImport(t, packages, modulePath+"/internal/httpapi", modulePath+"/internal/platform/datastore")
+	assertDoesNotImport(t, packages, modulePath+"/internal/httpapi", modulePath+"/internal/platform/sqlite")
 	assertDoesNotImport(t, packages, modulePath+"/internal/status", modulePath+"/internal/httpapi")
-	assertDoesNotImport(t, packages, modulePath+"/internal/status", modulePath+"/internal/platform/postgres")
-	assertDoesNotImport(t, packages, modulePath+"/internal/platform/postgres", modulePath+"/internal/httpapi")
-	assertDoesNotImport(t, packages, modulePath+"/internal/platform/postgres", modulePath+"/internal/status")
+	assertDoesNotImport(t, packages, modulePath+"/internal/status", modulePath+"/internal/platform/datastore")
+	assertDoesNotImport(t, packages, modulePath+"/internal/status", modulePath+"/internal/platform/sqlite")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/datastore", modulePath+"/internal/httpapi")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/datastore", modulePath+"/internal/status")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/sqlite", modulePath+"/internal/httpapi")
+	assertDoesNotImport(t, packages, modulePath+"/internal/platform/sqlite", modulePath+"/internal/status")
 	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/app")
 	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/httpapi")
-	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/platform/postgres")
+	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/platform/datastore")
+	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/platform/sqlite")
 	assertDoesNotImport(t, packages, modulePath+"/internal/config", modulePath+"/internal/status")
 	assertDoesNotImport(t, packages, modulePath+"/cmd/server", modulePath+"/internal/httpapi")
-	assertDoesNotImport(t, packages, modulePath+"/cmd/server", modulePath+"/internal/platform/postgres")
+	assertDoesNotImport(t, packages, modulePath+"/cmd/server", modulePath+"/internal/platform/datastore")
+	assertDoesNotImport(t, packages, modulePath+"/cmd/server", modulePath+"/internal/platform/sqlite")
 	assertDoesNotImport(t, packages, modulePath+"/cmd/server", modulePath+"/internal/status")
 }
 
@@ -283,7 +297,7 @@ linters:
             - "$all"
           allow:
             - $gostd
-            - orderbuddy-ai/backend
+            - ai/backend
             - github.com/gofiber/fiber/v3
             - github.com/jackc/pgx/v5
 
@@ -428,7 +442,7 @@ package httpapi
 import (
 	"github.com/gofiber/fiber/v3"
 
-	"orderbuddy-ai/backend/internal/status"
+	"ai/backend/internal/status"
 )
 
 const (
@@ -712,10 +726,10 @@ import (
 	"syscall"
 	"time"
 
-	"orderbuddy-ai/backend/internal/config"
-	"orderbuddy-ai/backend/internal/httpapi"
-	"orderbuddy-ai/backend/internal/platform/postgres"
-	"orderbuddy-ai/backend/internal/status"
+	"ai/backend/internal/config"
+	"ai/backend/internal/httpapi"
+	"ai/backend/internal/platform/postgres"
+	"ai/backend/internal/status"
 )
 ```
 
@@ -837,7 +851,7 @@ direct_deps="$(go list -m -f '{{if not .Indirect}}{{.Path}}{{end}}' all | sed '/
 allowed_direct_deps="$(printf '%s\n' \
   'github.com/gofiber/fiber/v3' \
   'github.com/jackc/pgx/v5' \
-  'orderbuddy-ai/backend' \
+  'ai/backend' \
   | sort)"
 unexpected_deps="$(comm -23 <(printf '%s\n' "${direct_deps}") <(printf '%s\n' "${allowed_direct_deps}"))"
 if [[ -n "${unexpected_deps}" ]]; then
@@ -857,13 +871,13 @@ fi
 echo "checking package allowlist"
 packages="$(go list ./... | sort)"
 allowed_packages="$(printf '%s\n' \
-  'orderbuddy-ai/backend/cmd/server' \
-  'orderbuddy-ai/backend/internal/app' \
-  'orderbuddy-ai/backend/internal/architecture' \
-  'orderbuddy-ai/backend/internal/config' \
-  'orderbuddy-ai/backend/internal/httpapi' \
-  'orderbuddy-ai/backend/internal/platform/postgres' \
-  'orderbuddy-ai/backend/internal/status' \
+  'ai/backend/cmd/server' \
+  'ai/backend/internal/app' \
+  'ai/backend/internal/architecture' \
+  'ai/backend/internal/config' \
+  'ai/backend/internal/httpapi' \
+  'ai/backend/internal/platform/postgres' \
+  'ai/backend/internal/status' \
   | sort)"
 unexpected_packages="$(comm -23 <(printf '%s\n' "${packages}") <(printf '%s\n' "${allowed_packages}"))"
 if [[ -n "${unexpected_packages}" ]]; then

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"orderbuddy-ai/backend/internal/config"
+	"ai/backend/internal/config"
 )
 
 func TestRunWrapsSQLiteConnectionErrors(t *testing.T) {
@@ -12,7 +12,7 @@ func TestRunWrapsSQLiteConnectionErrors(t *testing.T) {
 		AppEnv:         config.DefaultAppEnv,
 		HTTPAddr:       config.DefaultHTTPAddr,
 		DatabaseDriver: config.DefaultDatabaseDriver,
-		DatabaseURL:    "/dev/null/orderbuddy_ai.db",
+		DatabaseURL:    "/dev/null/ai.db",
 	})
 
 	if err == nil {

@@ -3,8 +3,8 @@ package main
 import (
 	"log"
 
-	"orderbuddy-ai/backend/internal/app"
-	"orderbuddy-ai/backend/internal/config"
+	"ai/backend/internal/app"
+	"ai/backend/internal/config"
 )
 
 func main() {

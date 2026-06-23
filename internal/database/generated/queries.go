@@ -3,8 +3,8 @@
 package generated
 
 import (
+	"ai/backend/internal/database"
 	"context"
-	"orderbuddy-ai/backend/internal/database"
 	"strings"
 
 	"gorm.io/cli/gorm/typed"

@@ -10,8 +10,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"orderbuddy-ai/backend/internal/database"
-	"orderbuddy-ai/backend/internal/database/generated"
+	"ai/backend/internal/database"
+	"ai/backend/internal/database/generated"
 )
 
 var ErrDatabaseMissing = errors.New("tool catalog database is missing")
@@ -26,14 +26,6 @@ func NewRepository(db *gorm.DB) Repository {
 	}
 
 	return Repository{database: db}
-}
-
-func (repository Repository) CreateSchema(context.Context) error {
-	if repository.database == nil {
-		return ErrDatabaseMissing
-	}
-
-	return nil
 }
 
 func (repository Repository) SaveTool(ctx context.Context, tool Tool) (Tool, error) {

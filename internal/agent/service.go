@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"orderbuddy-ai/backend/internal/toolcatalog"
+	"ai/backend/internal/toolcatalog"
 )
 
 var ErrRunFailed = errors.New("agent run failed")

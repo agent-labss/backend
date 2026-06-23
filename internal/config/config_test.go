@@ -1,6 +1,14 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
+
+const (
+	testHTTPAddr     = ":9090"
+	testDotEnvAPIKey = "sk-dotenv"
+)
 
 func TestLoadUsesDefaults(t *testing.T) {
 	clearEnv(t)
@@ -23,14 +31,14 @@ func TestLoadUsesAgentDefaults(t *testing.T) {
 func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("APP_ENV", "test")
-	t.Setenv("HTTP_ADDR", ":9090")
+	t.Setenv("HTTP_ADDR", testHTTPAddr)
 	t.Setenv("DATABASE_DRIVER", "sqlite")
 	t.Setenv("DATABASE_URL", "custom.db")
 
 	cfg := Load()
 	want := defaultConfig()
 	want.AppEnv = "test"
-	want.HTTPAddr = ":9090"
+	want.HTTPAddr = testHTTPAddr
 	want.DatabaseDriver = "sqlite"
 	want.DatabaseURL = "custom.db"
 
@@ -41,7 +49,7 @@ func TestLoadUsesAgentEnvironmentOverrides(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("OPENAI_MODEL", "gpt-5-mini")
-	t.Setenv("TRUSTED_TOOL_DIR", "/opt/orderbuddy-tools")
+	t.Setenv("TRUSTED_TOOL_DIR", "/opt/ai-tools")
 	t.Setenv("INTERNAL_REPORT_USERNAME", "svc-user")
 	t.Setenv("INTERNAL_REPORT_PASSWORD", "svc-pass")
 	t.Setenv("AGENT_MAX_STEPS", "12")
@@ -51,11 +59,56 @@ func TestLoadUsesAgentEnvironmentOverrides(t *testing.T) {
 	want := defaultConfig()
 	want.OpenAIAPIKey = "sk-test"
 	want.OpenAIModel = "gpt-5-mini"
-	want.TrustedToolDir = "/opt/orderbuddy-tools"
+	want.TrustedToolDir = "/opt/ai-tools"
 	want.InternalReportUsername = "svc-user"
 	want.InternalReportPassword = "svc-pass"
 	want.AgentMaxSteps = 12
 	want.AgentTotalTimeoutMS = 90000
+
+	assertConfig(t, cfg, want)
+}
+
+func TestLoadUsesDotEnvOverrides(t *testing.T) {
+	clearEnv(t)
+	chdirTemp(t)
+	writeDotEnv(t, `# local development
+APP_ENV=local
+HTTP_ADDR=:7070
+DATABASE_DRIVER=sqlite
+DATABASE_URL=sqlite.db
+OPENAI_API_KEY=`+testDotEnvAPIKey+`
+OPENAI_MODEL=gpt-5-mini
+TRUSTED_TOOL_DIR=./tools
+INTERNAL_REPORT_USERNAME=dotenv-user
+INTERNAL_REPORT_PASSWORD='dotenv pass'
+AGENT_MAX_STEPS=5
+AGENT_TOTAL_TIMEOUT_MS=30000
+`)
+
+	cfg := Load()
+	want := defaultConfig()
+	want.AppEnv = "local"
+	want.HTTPAddr = ":7070"
+	want.DatabaseURL = "sqlite.db"
+	want.OpenAIAPIKey = testDotEnvAPIKey
+	want.InternalReportUsername = "dotenv-user"
+	want.InternalReportPassword = "dotenv pass"
+	want.AgentMaxSteps = 5
+	want.AgentTotalTimeoutMS = 30000
+
+	assertConfig(t, cfg, want)
+}
+
+func TestLoadEnvironmentOverridesDotEnv(t *testing.T) {
+	clearEnv(t)
+	chdirTemp(t)
+	writeDotEnv(t, "HTTP_ADDR=:7070\nOPENAI_API_KEY="+testDotEnvAPIKey+"\n")
+	t.Setenv("HTTP_ADDR", testHTTPAddr)
+
+	cfg := Load()
+	want := defaultConfig()
+	want.HTTPAddr = testHTTPAddr
+	want.OpenAIAPIKey = testDotEnvAPIKey
 
 	assertConfig(t, cfg, want)
 }
@@ -100,6 +153,31 @@ func defaultConfig() Config {
 		InternalReportPassword: "",
 		AgentMaxSteps:          DefaultAgentMaxSteps,
 		AgentTotalTimeoutMS:    DefaultAgentTotalTimeoutMS,
+	}
+}
+
+func chdirTemp(t *testing.T) {
+	t.Helper()
+
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(original); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func writeDotEnv(t *testing.T, content string) {
+	t.Helper()
+
+	if err := os.WriteFile(".env", []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile(.env) error = %v", err)
 	}
 }
 

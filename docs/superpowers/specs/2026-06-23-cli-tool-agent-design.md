@@ -44,7 +44,9 @@ The current backend is small and has strict package ownership:
 - `internal/app` wires dependencies and graceful shutdown.
 - `internal/config` reads environment settings only.
 - `internal/httpapi` owns Fiber routes, middleware, and HTTP helpers.
-- `internal/platform/postgres` owns PostgreSQL connectivity only.
+- `internal/database` owns GORM models, GORM CLI query inputs, and generated query helpers.
+- `internal/platform/datastore` owns database driver selection, close, and ping adapters.
+- `internal/platform/sqlite` owns SQLite connectivity and migration.
 - `internal/status` owns health and readiness behavior only.
 
 Repository guardrails block new packages, new dependencies, new architecture layers, interfaces, or enum-like values unless the need, alternatives, and blast radius are explicit and approved.
@@ -61,7 +63,7 @@ Need: tool registration and metadata are durable business concepts. They should 
 
 Alternative considered: store tool metadata logic directly in `internal/httpapi` or `internal/app`. That would mix routing or wiring with business rules and make command-path validation hard to test independently.
 
-Blast radius: new package allowlist entries, architecture tests, PostgreSQL tables for tools and instructions, HTTP handlers for registering and listing tools, and config for the trusted tool directory.
+Blast radius: new package allowlist entries, architecture tests, SQLite/GORM models for tools and instructions, GORM CLI query helpers where custom SQL is needed, HTTP handlers for registering and listing tools, and config for the trusted tool directory.
 
 ### `internal/agent`
 
@@ -71,7 +73,7 @@ Need: orchestration is separate from the catalog. The agent consumes tools, exec
 
 Alternative considered: combine agent behavior with `internal/toolcatalog`. That would couple durable metadata with runtime execution and make it harder to reason about security and audit boundaries.
 
-Blast radius: new package allowlist entries, architecture tests, PostgreSQL tables for runs and steps, HTTP handler for creating runs, OpenAI configuration, service-account configuration, and command execution tests.
+Blast radius: new package allowlist entries, architecture tests, SQLite/GORM models for runs and steps, HTTP handler for creating runs, OpenAI configuration, service-account configuration, and command execution tests.
 
 `internal/agent` may depend on `internal/toolcatalog`. `internal/toolcatalog` must not depend on `internal/agent`.
 
@@ -91,7 +93,7 @@ The system has four main surfaces.
 
 ### Tool Registration
 
-Codex or a developer creates an atomic CLI tool outside this backend and places it in a trusted directory such as `./tools` or `/opt/orderbuddy-tools`.
+Codex or a developer creates an atomic CLI tool outside this backend and places it in a trusted directory such as `./tools` or `/opt/ai-tools`.
 
 The registration API accepts the tool name, description, command path, input schema, output schema, timeout, and whether the tool requires the internal service account. The backend resolves and validates the command path before persisting it.
 

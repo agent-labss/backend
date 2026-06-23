@@ -6,7 +6,9 @@
 
 **Architecture:** Add `internal/toolcatalog` for registered tool metadata, trusted path validation, and static agent instructions. Add `internal/agent` for OpenAI orchestration, local CLI execution, run-scoped sensitive context, redaction, and audit. The backend exposes HTTP APIs for tool registration, tool listing, instruction update, and synchronous agent runs.
 
-**Tech Stack:** Go 1.25, Fiber v3, pgx v5, PostgreSQL, official OpenAI Go SDK `github.com/openai/openai-go/v3`, standard-library `os/exec`, JSON stdin/stdout CLI protocol.
+**Tech Stack:** Go 1.26.2, Fiber v3, SQLite through GORM, GORM CLI typed query generation, official OpenAI Go SDK `github.com/openai/openai-go/v3`, standard-library `os/exec`, JSON stdin/stdout CLI protocol.
+
+> Current status: this historical implementation plan originally used pgx/PostgreSQL. The current repository has migrated to `DATABASE_DRIVER=sqlite`, `DATABASE_URL=ai.db`, GORM models in `internal/database`, GORM CLI query inputs in `internal/database/queryinput`, generated helpers in `internal/database/generated`, and SQLite connectivity in `internal/platform/sqlite`.
 
 ---
 
@@ -39,8 +41,8 @@ Explicitly out of scope:
 - Modify `internal/config/config_test.go`: cover default and override behavior for new config.
 - Create `internal/toolcatalog/types.go`: typed constants, request/response/domain structs, validation helpers.
 - Create `internal/toolcatalog/types_test.go`: validation tests for tool names, schema JSON objects, timeouts, and trusted paths.
-- Create `internal/toolcatalog/repository.go`: PostgreSQL schema creation and persistence for tools and instructions.
-- Create `internal/toolcatalog/repository_test.go`: nil-pool and SQL-shape tests that do not require a live database.
+- Create `internal/toolcatalog/repository.go`: GORM persistence for tools and instructions.
+- Create `internal/toolcatalog/repository_test.go`: SQLite-backed repository tests.
 - Create `internal/toolcatalog/service.go`: register/list tools and update/get instructions.
 - Create `internal/toolcatalog/service_test.go`: service tests with in-memory repository fakes.
 - Create `internal/toolcatalog/handler.go`: Fiber handlers for `/api/tools` and `/api/agent/instructions`.
@@ -54,8 +56,8 @@ Explicitly out of scope:
 - Create `internal/agent/executor_test.go`: tests using temporary helper scripts.
 - Create `internal/agent/llm.go`: OpenAI client wrapper and fakeable `Planner` interface.
 - Create `internal/agent/llm_test.go`: action parsing and wrapper-free planner tests.
-- Create `internal/agent/repository.go`: PostgreSQL schema and audit persistence for runs and steps.
-- Create `internal/agent/repository_test.go`: nil-pool and SQL-shape tests.
+- Create `internal/agent/repository.go`: GORM audit persistence for runs and steps.
+- Create `internal/agent/repository_test.go`: SQLite-backed repository tests.
 - Create `internal/agent/service.go`: controlled agent loop.
 - Create `internal/agent/service_test.go`: fake planner, fake tool catalog, and fake executor tests.
 - Create `internal/agent/handler.go`: Fiber handler for `POST /api/agent/runs`.
@@ -64,7 +66,7 @@ Explicitly out of scope:
 - Modify `internal/httpapi/router_test.go`: route and CORS method tests.
 - Modify `internal/httpapi/middleware.go`: allow `POST` and `PUT`.
 - Modify `internal/app/app.go`: wire repositories, services, OpenAI planner, CLI executor, and handlers.
-- Modify `internal/app/app_test.go`: keep postgres error wrapping covered.
+- Modify `internal/app/app_test.go`: keep SQLite error wrapping covered.
 
 ## API Constants
 
@@ -96,22 +98,26 @@ Add these boundary assertions to `TestPackageBoundaries`:
 ```go
 assertDoesNotImport(t, packages, modulePath+"/internal/toolcatalog", modulePath+"/internal/agent")
 assertDoesNotImport(t, packages, modulePath+"/internal/toolcatalog", modulePath+"/internal/httpapi")
-assertDoesNotImport(t, packages, modulePath+"/internal/toolcatalog", modulePath+"/internal/platform/postgres")
+assertDoesNotImport(t, packages, modulePath+"/internal/toolcatalog", modulePath+"/internal/platform/datastore")
+assertDoesNotImport(t, packages, modulePath+"/internal/toolcatalog", modulePath+"/internal/platform/sqlite")
 assertDoesNotImport(t, packages, modulePath+"/internal/agent", modulePath+"/internal/httpapi")
-assertDoesNotImport(t, packages, modulePath+"/internal/agent", modulePath+"/internal/platform/postgres")
-assertDoesNotImport(t, packages, modulePath+"/internal/platform/postgres", modulePath+"/internal/agent")
-assertDoesNotImport(t, packages, modulePath+"/internal/platform/postgres", modulePath+"/internal/toolcatalog")
+assertDoesNotImport(t, packages, modulePath+"/internal/agent", modulePath+"/internal/platform/datastore")
+assertDoesNotImport(t, packages, modulePath+"/internal/agent", modulePath+"/internal/platform/sqlite")
+assertDoesNotImport(t, packages, modulePath+"/internal/platform/datastore", modulePath+"/internal/agent")
+assertDoesNotImport(t, packages, modulePath+"/internal/platform/datastore", modulePath+"/internal/toolcatalog")
+assertDoesNotImport(t, packages, modulePath+"/internal/platform/sqlite", modulePath+"/internal/agent")
+assertDoesNotImport(t, packages, modulePath+"/internal/platform/sqlite", modulePath+"/internal/toolcatalog")
 ```
 
-Rationale: domain packages may define repository types that accept pgx interfaces, but platform postgres remains only connectivity and must not import domains. Handlers may live in domain packages and import Fiber, matching the existing `internal/status` pattern.
+Rationale: domain packages may define repository types that accept GORM database handles, but platform database packages remain only connectivity and must not import domains. Handlers may live in domain packages and import Fiber, matching the existing `internal/status` pattern.
 
 - [x] **Step 2: Update repo guard package allowlist**
 
 In `scripts/repo-guard.sh`, add these allowed packages:
 
 ```bash
-  'orderbuddy-ai/backend/internal/agent' \
-  'orderbuddy-ai/backend/internal/toolcatalog' \
+  'ai/backend/internal/agent' \
+  'ai/backend/internal/toolcatalog' \
 ```
 
 - [x] **Step 3: Allow the OpenAI SDK in repo guard**
@@ -130,7 +136,7 @@ Run:
 go test ./internal/architecture
 ```
 
-Expected: `ok orderbuddy-ai/backend/internal/architecture`.
+Expected: `ok ai/backend/internal/architecture`.
 
 - [x] **Step 5: Commit**
 
@@ -190,7 +196,7 @@ func TestLoadUsesAgentDefaults(t *testing.T) {
 func TestLoadUsesAgentEnvironmentOverrides(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("OPENAI_MODEL", "gpt-5-mini")
-	t.Setenv("TRUSTED_TOOL_DIR", "/opt/orderbuddy-tools")
+	t.Setenv("TRUSTED_TOOL_DIR", "/opt/ai-tools")
 	t.Setenv("INTERNAL_REPORT_USERNAME", "svc-user")
 	t.Setenv("INTERNAL_REPORT_PASSWORD", "svc-pass")
 	t.Setenv("AGENT_MAX_STEPS", "12")
@@ -204,7 +210,7 @@ func TestLoadUsesAgentEnvironmentOverrides(t *testing.T) {
 	if cfg.OpenAIModel != "gpt-5-mini" {
 		t.Fatalf("OpenAIModel = %q, want override", cfg.OpenAIModel)
 	}
-	if cfg.TrustedToolDir != "/opt/orderbuddy-tools" {
+	if cfg.TrustedToolDir != "/opt/ai-tools" {
 		t.Fatalf("TrustedToolDir = %q, want override", cfg.TrustedToolDir)
 	}
 	if cfg.InternalReportUsername != "svc-user" {
@@ -261,7 +267,7 @@ import (
 const (
 	DefaultAppEnv              = "development"
 	DefaultHTTPAddr            = ":8080"
-	DefaultDatabaseURL         = "postgres://orderbuddy_ai:orderbuddy_ai@localhost:5432/orderbuddy_ai?sslmode=disable"
+	DefaultDatabaseURL         = "ai.db"
 	DefaultOpenAIModel         = "gpt-5-mini"
 	DefaultTrustedToolDir      = "./tools"
 	DefaultAgentMaxSteps       = 8
@@ -1732,7 +1738,7 @@ import (
 	"testing"
 	"time"
 
-	"orderbuddy-ai/backend/internal/toolcatalog"
+	"ai/backend/internal/toolcatalog"
 )
 
 func TestCLIExecutorReturnsObservationAndStoresSensitiveOutput(t *testing.T) {
@@ -1900,7 +1906,7 @@ import (
 	"os/exec"
 	"time"
 
-	"orderbuddy-ai/backend/internal/toolcatalog"
+	"ai/backend/internal/toolcatalog"
 )
 
 var ErrToolExecutionFailed = errors.New("tool execution failed")
@@ -2121,7 +2127,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
 
-	"orderbuddy-ai/backend/internal/toolcatalog"
+	"ai/backend/internal/toolcatalog"
 )
 
 var ErrInvalidPlannerAction = errors.New("invalid planner action")
@@ -2472,7 +2478,7 @@ import (
 	"testing"
 	"time"
 
-	"orderbuddy-ai/backend/internal/toolcatalog"
+	"ai/backend/internal/toolcatalog"
 )
 
 type fakePlanner struct {
@@ -2728,7 +2734,7 @@ import (
 	"fmt"
 	"time"
 
-	"orderbuddy-ai/backend/internal/toolcatalog"
+	"ai/backend/internal/toolcatalog"
 )
 
 var ErrRunFailed = errors.New("agent run failed")
@@ -3253,9 +3259,9 @@ package httpapi
 import (
 	"github.com/gofiber/fiber/v3"
 
-	"orderbuddy-ai/backend/internal/agent"
-	"orderbuddy-ai/backend/internal/status"
-	"orderbuddy-ai/backend/internal/toolcatalog"
+	"ai/backend/internal/agent"
+	"ai/backend/internal/status"
+	"ai/backend/internal/toolcatalog"
 )
 
 const (
@@ -3328,8 +3334,8 @@ Modify `internal/app/app.go` imports to include:
 ```go
 "time"
 
-"orderbuddy-ai/backend/internal/agent"
-"orderbuddy-ai/backend/internal/toolcatalog"
+"ai/backend/internal/agent"
+"ai/backend/internal/toolcatalog"
 ```
 
 After postgres connection, create schemas and wire services:

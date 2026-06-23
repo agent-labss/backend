@@ -1,4 +1,4 @@
-package db
+package datastore
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"orderbuddy-ai/backend/internal/platform/sqlite"
+	"ai/backend/internal/platform/sqlite"
 )
 
 const (
@@ -22,16 +22,12 @@ type Config struct {
 	URL    string
 }
 
-type Connector interface {
-	Connect(ctx context.Context, databaseURL string) (*gorm.DB, error)
-}
-
 func Connect(ctx context.Context, cfg Config) (*gorm.DB, error) {
 	var database *gorm.DB
 	var err error
 	switch cfg.Driver {
 	case DriverSQLite:
-		database, err = sqlite.Connector{}.Connect(ctx, cfg.URL)
+		database, err = sqlite.Connect(ctx, cfg.URL)
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedDriver, cfg.Driver)
 	}

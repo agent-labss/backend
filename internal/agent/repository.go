@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"time"
 
+	"gorm.io/cli/gorm/typed"
 	"gorm.io/gorm"
 
-	"orderbuddy-ai/backend/internal/database"
-	"orderbuddy-ai/backend/internal/database/generated"
+	"ai/backend/internal/database"
 )
 
 var ErrDatabaseMissing = errors.New("agent database is missing")
@@ -26,14 +26,6 @@ func NewRepository(db *gorm.DB) Repository {
 	}
 
 	return Repository{database: db}
-}
-
-func (repository Repository) CreateSchema(context.Context) error {
-	if repository.database == nil {
-		return ErrDatabaseMissing
-	}
-
-	return nil
 }
 
 func (repository Repository) StartRun(ctx context.Context, message string) (Run, error) {
@@ -56,7 +48,7 @@ func (repository Repository) StartRun(ctx context.Context, message string) (Run,
 		ErrorSummary:  "",
 		StartedAt:     run.StartedAt,
 	}
-	if err := generated.AgentRunQueries[database.AgentRun](repository.database).Create(ctx, &record); err != nil {
+	if err := typed.G[database.AgentRun](repository.database).Create(ctx, &record); err != nil {
 		return Run{}, fmt.Errorf("start run: %w", err)
 	}
 
@@ -73,7 +65,7 @@ func (repository Repository) FinishRun(ctx context.Context, run Run) error {
 		return fmt.Errorf("marshal output summary: %w", err)
 	}
 
-	if err := generated.AgentRunQueries[database.AgentRun](repository.database).Exec(ctx, `
+	if err := typed.G[database.AgentRun](repository.database).Exec(ctx, `
 UPDATE agent_runs
 SET status = ?, answer_summary = ?, output_summary = ?, error_summary = ?, finished_at = ?
 WHERE id = ?
@@ -101,7 +93,7 @@ func (repository Repository) SaveStep(ctx context.Context, step StepRecord) erro
 		ErrorSummary:  RedactText(step.ErrorSummary),
 		CreatedAt:     time.Now().UTC(),
 	}
-	if err := generated.AgentRunStepQueries[database.AgentRunStep](repository.database).Create(ctx, &record); err != nil {
+	if err := typed.G[database.AgentRunStep](repository.database).Create(ctx, &record); err != nil {
 		return fmt.Errorf("save step: %w", err)
 	}
 

@@ -1,6 +1,6 @@
 package queryinput
 
-import "orderbuddy-ai/backend/internal/database"
+import database "ai/backend/internal/database"
 
 type ToolQueries interface {
 	// SELECT * FROM @@table WHERE status = @status ORDER BY name

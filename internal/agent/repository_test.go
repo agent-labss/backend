@@ -3,28 +3,14 @@ package agent
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 
 	"gorm.io/gorm"
 
-	"orderbuddy-ai/backend/internal/platform/sqlite"
+	"ai/backend/internal/platform/sqlite"
 )
 
 const testRunAnswer = "done"
-
-func TestRepositoryCreateSchemaRequiresPool(t *testing.T) {
-	repository := NewRepository(nil)
-
-	err := repository.CreateSchema(context.Background())
-
-	if err == nil {
-		t.Fatal("CreateSchema() error = nil, want error")
-	}
-	if !strings.Contains(err.Error(), "agent database is missing") {
-		t.Fatalf("CreateSchema() error = %q, want missing database context", err)
-	}
-}
 
 func TestRepositoryPersistsRunAndStep(t *testing.T) {
 	repository := NewRepository(newTestDatabase(t))

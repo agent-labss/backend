@@ -8,9 +8,9 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"orderbuddy-ai/backend/internal/agent"
-	"orderbuddy-ai/backend/internal/status"
-	"orderbuddy-ai/backend/internal/toolcatalog"
+	"ai/backend/internal/agent"
+	"ai/backend/internal/status"
+	"ai/backend/internal/toolcatalog"
 )
 
 type fakeDatabase struct{}

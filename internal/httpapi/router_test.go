@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"net/http"
 	"testing"
 
@@ -12,18 +11,12 @@ import (
 	"ai/backend/internal/toolcatalog"
 )
 
-type fakeDatabase struct{}
-
 func closeResponseBody(t *testing.T, resp *http.Response) {
 	t.Helper()
 
 	if err := resp.Body.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-}
-
-func (database *fakeDatabase) Ping(_ context.Context) error {
-	return nil
 }
 
 type fakeToolHandler struct{}
@@ -48,7 +41,7 @@ func (handler fakeAgentHandler) CreateRun(c fiber.Ctx) error {
 
 func TestOptionsRequestReturnsCORSHeaders(t *testing.T) {
 	app := NewRouter(RouterConfig{
-		StatusHandler: status.NewHandler(status.NewService(&fakeDatabase{}), "test"),
+		StatusHandler: status.NewHandler(status.NewService(), "test"),
 	})
 
 	req, err := http.NewRequest(http.MethodOptions, StatusPath, nil)
@@ -90,7 +83,7 @@ func assertRouteStatus(t *testing.T, method string, path string, wantStatus int)
 	t.Helper()
 
 	app := NewRouter(RouterConfig{
-		StatusHandler: status.NewHandler(status.NewService(&fakeDatabase{}), "test"),
+		StatusHandler: status.NewHandler(status.NewService(), "test"),
 		ToolHandler:   fakeToolHandler{},
 		AgentHandler:  fakeAgentHandler{},
 	})

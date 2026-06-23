@@ -14,7 +14,7 @@ import (
 const (
 	testRunID       = "run_1"
 	testStepID      = "step_1"
-	testSessionRef  = "ctx://login/session"
+	testSessionRef  = "ctx://step_1/login/session"
 	testCookieValue = "cookie-value"
 	testPartnerID   = "p_123"
 	testSecretToken = "secret-token"
@@ -65,7 +65,7 @@ print(json.dumps({"status":"ok","outputs":{"received":{"sensitive":False,"value"
 
 	executor := NewCLIExecutor()
 	runContext := NewRunContext()
-	runContext.Store("login", "session", map[string]any{
+	runContext.Store(testStepID, "login", "session", map[string]any{
 		"access_token": testSecretToken,
 		"user": map[string]any{
 			"id": "u_123",
@@ -102,6 +102,99 @@ print(json.dumps({"status":"ok","outputs":{"received":{"sensitive":False,"value"
 		t.Fatalf("requests = %#v, want one-element array", received["requests"])
 	}
 	assertNestedSessionResolved(t, requests[0], []string{"session"})
+}
+
+func TestCLIExecutorSensitiveOutputReferencesDoNotCollideForRepeatedTool(t *testing.T) {
+	commandPath := writeToolScript(t, `#!/usr/bin/env sh
+python3 -c '
+import json
+import sys
+
+envelope = json.load(sys.stdin)
+value = "cookie-" + envelope["step_id"]
+print(json.dumps({"status":"ok","outputs":{"session":{"sensitive":True,"value":value}}}))
+'
+`)
+
+	executor := NewCLIExecutor()
+	runContext := NewRunContext()
+
+	first, err := executor.Execute(context.Background(), ExecuteRequest{
+		RunID:      testRunID,
+		StepID:     "step_1",
+		StepOrder:  1,
+		Tool:       toolcatalog.Tool{Name: "login", CommandPath: commandPath, TimeoutMS: 1000},
+		RunContext: runContext,
+	})
+	if err != nil {
+		t.Fatalf("first Execute() error = %v", err)
+	}
+	second, err := executor.Execute(context.Background(), ExecuteRequest{
+		RunID:      testRunID,
+		StepID:     "step_2",
+		StepOrder:  2,
+		Tool:       toolcatalog.Tool{Name: "login", CommandPath: commandPath, TimeoutMS: 1000},
+		RunContext: runContext,
+	})
+	if err != nil {
+		t.Fatalf("second Execute() error = %v", err)
+	}
+
+	firstRef := requireStringOutput(t, first, "session")
+	secondRef := requireStringOutput(t, second, "session")
+	if firstRef == secondRef {
+		t.Fatalf("session refs both = %q, want distinct refs", firstRef)
+	}
+	requireResolvedContextValue(t, runContext, firstRef, "cookie-step_1")
+	requireResolvedContextValue(t, runContext, secondRef, "cookie-step_2")
+}
+
+func TestCLIExecutorDoesNotExposeBackendEnvironmentToTools(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", testSecretToken)
+	t.Setenv("DATABASE_URL", "sqlite.db")
+
+	commandPath := writeToolScript(t, `#!/usr/bin/env sh
+python3 -c '
+import json
+import os
+
+print(json.dumps({"status":"ok","outputs":{"env":{"sensitive":False,"value":{
+  "openai": os.environ.get("OPENAI_API_KEY"),
+  "database": os.environ.get("DATABASE_URL"),
+  "path": os.environ.get("PATH")
+}}}}))
+'
+`)
+
+	executor := NewCLIExecutor()
+	observation, err := executor.Execute(context.Background(), ExecuteRequest{
+		RunID:      testRunID,
+		StepID:     testStepID,
+		StepOrder:  1,
+		Tool:       toolcatalog.Tool{Name: "env", CommandPath: commandPath, TimeoutMS: 1000},
+		RunContext: NewRunContext(),
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	env, ok := observation.Outputs["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("env output = %T, want map[string]any", observation.Outputs["env"])
+	}
+	if env["openai"] != nil {
+		t.Fatalf("OPENAI_API_KEY = %v, want nil", env["openai"])
+	}
+	if env["database"] != nil {
+		t.Fatalf("DATABASE_URL = %v, want nil", env["database"])
+	}
+	path, ok := env["path"].(string)
+	if !ok {
+		t.Fatalf("PATH = %T, want string", env["path"])
+	}
+	if strings.TrimSpace(path) == "" {
+		t.Fatal("PATH is empty, want minimal executable path")
+	}
 }
 
 func TestCLIExecutorFailsOnInvalidJSON(t *testing.T) {
@@ -203,12 +296,35 @@ func assertNestedSessionResolved(t *testing.T, value any, path []string) {
 		t.Fatalf("session = %T, want resolved object", current)
 	}
 	if session["access_token"] != redactedValue {
-		encoded, _ := json.Marshal(session)
+		encoded, err := json.Marshal(session)
+		if err != nil {
+			t.Fatalf("Marshal session error = %v", err)
+		}
 		t.Fatalf("session = %s, want redacted access_token", encoded)
 	}
 	user, ok := session["user"].(map[string]any)
 	if !ok || user["id"] != "u_123" {
 		t.Fatalf("session.user = %#v, want resolved user", session["user"])
+	}
+}
+
+func requireStringOutput(t *testing.T, observation Observation, name string) string {
+	t.Helper()
+
+	value, ok := observation.Outputs[name].(string)
+	if !ok {
+		t.Fatalf("%s output = %T, want string", name, observation.Outputs[name])
+	}
+
+	return value
+}
+
+func requireResolvedContextValue(t *testing.T, runContext *RunContext, ref string, want string) {
+	t.Helper()
+
+	resolved, ok := runContext.Resolve(ref)
+	if !ok || resolved.Value != want {
+		t.Fatalf("resolved %s = %v, %v; want %s, true", ref, resolved.Value, ok, want)
 	}
 }
 

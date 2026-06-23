@@ -20,8 +20,8 @@ func NewRunContext() *RunContext {
 	return &RunContext{values: make(map[string]any)}
 }
 
-func (context *RunContext) Store(stepName string, outputName string, value any) string {
-	ref := contextReferencePrefix + stepName + "/" + outputName
+func (context *RunContext) Store(stepID string, toolName string, outputName string, value any) string {
+	ref := contextReferencePrefix + stepID + "/" + toolName + "/" + outputName
 	context.mutex.Lock()
 	defer context.mutex.Unlock()
 	context.values[ref] = value

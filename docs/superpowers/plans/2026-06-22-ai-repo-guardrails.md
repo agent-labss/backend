@@ -497,7 +497,7 @@ func withCORS(c fiber.Ctx) error {
 }
 ```
 
-- [ ] **Step 4: Add typed dependency status values in `internal/status/service.go`**
+- [ ] **Step 4: Keep status service metadata-only in `internal/status/service.go`**
 
 Replace the file with:
 
@@ -506,67 +506,28 @@ package status
 
 import (
 	"context"
-	"errors"
-	"time"
 )
 
 const serviceName = "ai-backend"
 
-const (
-	DependencyStatusOK    DependencyStatusValue = "ok"
-	DependencyStatusError DependencyStatusValue = "error"
-)
-
-var ErrDatabaseMissing = errors.New("database is missing")
-
-type DependencyStatusValue string
-
-type Service struct {
-	database DatabasePinger
-}
+type Service struct{}
 
 type Response struct {
-	Service     string           `json:"service"`
-	Environment string           `json:"environment"`
-	Database    DependencyStatus `json:"database"`
+	Service     string `json:"service"`
+	Environment string `json:"environment"`
 }
 
-type DependencyStatus struct {
-	Status DependencyStatusValue `json:"status"`
-}
-
-func NewService(database DatabasePinger) Service {
-	return Service{database: database}
-}
-
-func (service Service) Ready(parent context.Context) error {
-	return service.pingDatabase(parent)
+func NewService() Service {
+	return Service{}
 }
 
 func (service Service) Status(parent context.Context, environment string) Response {
-	databaseStatus := DependencyStatusOK
-	if service.pingDatabase(parent) != nil {
-		databaseStatus = DependencyStatusError
-	}
+	_ = parent
 
 	return Response{
 		Service:     serviceName,
 		Environment: environment,
-		Database: DependencyStatus{
-			Status: databaseStatus,
-		},
 	}
-}
-
-func (service Service) pingDatabase(parent context.Context) error {
-	if service.database == nil {
-		return ErrDatabaseMissing
-	}
-
-	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
-	defer cancel()
-
-	return service.database.Ping(ctx)
 }
 ```
 
@@ -651,7 +612,7 @@ const (
 
 Use `statusPath` in `app.Get` and `httptest.NewRequest`.
 
-In `internal/status/service_test.go` and `internal/status/handler_test.go`, replace expected `"ok"` and `"error"` dependency status comparisons with `DependencyStatusOK` and `DependencyStatusError`.
+In `internal/status/service_test.go` and `internal/status/handler_test.go`, assert only the service name and environment because database dependency health is not part of the status response.
 
 - [ ] **Step 8: Format and test**
 
@@ -988,5 +949,5 @@ No commit is needed in this task if the worktree is already clean.
 
 - Spec coverage: `AGENTS.md` policy is in Task 1; strict lint is in Task 3; architecture tests are in Task 2; repo guard is in Task 6; current-code cleanup and final verification are in Tasks 4, 5, 7, and 8.
 - Placeholder scan: the plan contains no deferred requirements or undefined future work.
-- Type consistency: the plan uses `DependencyStatusValue`, `DependencyStatusOK`, and `DependencyStatusError` consistently across service, handler, and tests.
+- Type consistency: the plan keeps status responses metadata-only across service, handler, and tests.
 - Scope check: the plan does not add CI, git hooks, CODEOWNERS, branch protection, cloud agent configuration, or new production packages.

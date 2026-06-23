@@ -46,18 +46,3 @@ func Close(database *gorm.DB) {
 		}
 	}
 }
-
-type Pinger struct {
-	DB *gorm.DB
-}
-
-func (pinger Pinger) Ping(ctx context.Context) error {
-	sqlDB, err := pinger.DB.DB()
-	if err != nil {
-		return fmt.Errorf("get database handle: %w", err)
-	}
-	if err := sqlDB.PingContext(ctx); err != nil {
-		return fmt.Errorf("ping database: %w", err)
-	}
-	return nil
-}

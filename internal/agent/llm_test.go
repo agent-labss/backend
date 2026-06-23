@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"ai/backend/internal/toolcatalog"
 )
 
 const testPlannerToolName = "export_report"
@@ -160,5 +163,78 @@ func TestParsePlannerActionRejectsUnknownAction(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("ParsePlannerAction() error = nil, want error")
+	}
+}
+
+func TestBuildPlannerPromptIncludesOnlyPlannerToolFields(t *testing.T) {
+	prompt, err := buildPlannerPrompt(PlanRequest{
+		Instructions: "use tools",
+		Message:      "export",
+		Tools: []toolcatalog.Tool{{
+			ID:           "tool_1",
+			Name:         testPlannerToolName,
+			Description:  "Export report.",
+			CommandPath:  "/trusted/export_report",
+			InputSchema:  json.RawMessage(`{"type":"object","properties":{"month":{"type":"string"}}}`),
+			OutputSchema: json.RawMessage(`{"type":"object"}`),
+			TimeoutMS:    1000,
+			Status:       toolcatalog.ToolStatusEnabled,
+			CreatedAt:    time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+			UpdatedAt:    time.Date(2026, 1, 3, 3, 4, 5, 0, time.UTC),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("buildPlannerPrompt() error = %v", err)
+	}
+
+	tool := requirePlannerPromptTool(t, prompt)
+	requirePlannerToolField(t, tool, "name", testPlannerToolName)
+	requirePlannerToolField(t, tool, "description", "Export report.")
+	requirePlannerToolIncludesField(t, tool, "input_schema")
+	requirePlannerToolOmitsFields(t, tool, "id", "command_path", "output_schema", "timeout_ms", "status", "created_at", "updated_at")
+}
+
+func requirePlannerPromptTool(t *testing.T, prompt []byte) map[string]any {
+	t.Helper()
+
+	var body map[string]any
+	if err := json.Unmarshal(prompt, &body); err != nil {
+		t.Fatalf("Unmarshal prompt error = %v", err)
+	}
+	tools, ok := body["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools = %#v, want one tool", body["tools"])
+	}
+	tool, ok := tools[0].(map[string]any)
+	if !ok {
+		t.Fatalf("tool = %T, want map[string]any", tools[0])
+	}
+
+	return tool
+}
+
+func requirePlannerToolField(t *testing.T, tool map[string]any, field string, want string) {
+	t.Helper()
+
+	if tool[field] != want {
+		t.Fatalf("%s = %v, want %s", field, tool[field], want)
+	}
+}
+
+func requirePlannerToolIncludesField(t *testing.T, tool map[string]any, field string) {
+	t.Helper()
+
+	if _, ok := tool[field]; !ok {
+		t.Fatalf("%s missing from planner tool view", field)
+	}
+}
+
+func requirePlannerToolOmitsFields(t *testing.T, tool map[string]any, fields ...string) {
+	t.Helper()
+
+	for _, field := range fields {
+		if _, ok := tool[field]; ok {
+			t.Fatalf("planner tool view includes %q: %#v", field, tool)
+		}
 	}
 }

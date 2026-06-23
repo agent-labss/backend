@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"gorm.io/gorm"
@@ -46,6 +47,27 @@ func TestRepositoryPersistsRunAndStep(t *testing.T) {
 	run.Answer = testRunAnswer
 	if err := repository.FinishRun(context.Background(), run); err != nil {
 		t.Fatalf("FinishRun() error = %v, want nil", err)
+	}
+}
+
+func TestRepositoryRedactsMessageBeforePersistingRun(t *testing.T) {
+	repository := NewRepository(newTestDatabase(t))
+	message := "export report with Authorization: Bearer " + testSecretToken
+
+	run, err := repository.StartRun(context.Background(), message)
+	if err != nil {
+		t.Fatalf("StartRun() error = %v, want nil", err)
+	}
+
+	var record database.AgentRun
+	if err := repository.database.WithContext(context.Background()).Where("id = ?", run.ID).First(&record).Error; err != nil {
+		t.Fatalf("load saved run error = %v", err)
+	}
+	if strings.Contains(record.Message, testSecretToken) {
+		t.Fatalf("record.Message = %q, want redacted token", record.Message)
+	}
+	if !strings.Contains(record.Message, redactedValue) {
+		t.Fatalf("record.Message = %q, want redacted marker", record.Message)
 	}
 }
 

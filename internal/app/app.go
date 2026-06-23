@@ -70,7 +70,7 @@ func newRouterConfig(cfg config.Config, database *gorm.DB) (httpapi.RouterConfig
 	agentRepository := agent.NewRepository(database)
 	agentHandler := newAgentHandler(cfg, agentRepository, toolService)
 
-	statusService := status.NewService(datastore.Pinger{DB: database})
+	statusService := status.NewService()
 	statusHandler := status.NewHandler(statusService, cfg.AppEnv)
 
 	return httpapi.RouterConfig{

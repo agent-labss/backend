@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/gofiber/fiber/v3"
 )
@@ -25,6 +26,9 @@ func (handler Handler) CreateRun(c fiber.Ctx) error {
 	var request CreateRunRequest
 	if err := c.Bind().Body(&request); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: "invalid JSON request body"})
+	}
+	if strings.TrimSpace(request.Message) == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: "message is required"})
 	}
 
 	response, err := handler.runner.Run(c.Context(), request)

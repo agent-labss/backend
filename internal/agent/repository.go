@@ -35,7 +35,7 @@ func (repository Repository) StartRun(ctx context.Context, message string) (Run,
 
 	run := Run{
 		ID:        newRuntimeID("run"),
-		Message:   message,
+		Message:   RedactText(message),
 		Status:    RunStatusRunning,
 		StartedAt: time.Now().UTC(),
 	}

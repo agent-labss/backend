@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 
@@ -55,6 +56,7 @@ func (executor CLIExecutor) runCommand(parent context.Context, request ExecuteRe
 	}
 
 	cmd := exec.CommandContext(ctx, request.Tool.CommandPath)
+	cmd.Env = minimalToolEnvironment()
 	cmd.Stdin = bytes.NewReader(stdin)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -126,15 +128,15 @@ func succeededObservation(request ExecuteRequest, runContext *RunContext, result
 		StepOrder: request.StepOrder,
 		ToolName:  request.Tool.Name,
 		Status:    StepStatusSucceeded,
-		Outputs:   outputsFromToolResult(request.Tool.Name, runContext, result),
+		Outputs:   outputsFromToolResult(request, runContext, result),
 	}
 }
 
-func outputsFromToolResult(toolName string, runContext *RunContext, result ToolResult) map[string]any {
+func outputsFromToolResult(request ExecuteRequest, runContext *RunContext, result ToolResult) map[string]any {
 	outputs := make(map[string]any, len(result.Outputs))
 	for name, output := range result.Outputs {
 		if output.Sensitive {
-			outputs[name] = runContext.Store(toolName, name, output.Value)
+			outputs[name] = runContext.Store(request.StepID, request.Tool.Name, name, output.Value)
 			continue
 		}
 		outputs[name] = RedactJSONValue(output.Value)
@@ -146,30 +148,33 @@ func outputsFromToolResult(toolName string, runContext *RunContext, result ToolR
 func resolveInputs(inputs map[string]any, runContext *RunContext) map[string]any {
 	resolved := make(map[string]any, len(inputs))
 	for key, value := range inputs {
-		resolved[key] = resolveInputValue(value, runContext)
+		resolveInputValueInto(resolved, key, value, runContext)
 	}
 
 	return resolved
 }
 
-func resolveInputValue(value any, runContext *RunContext) any {
+func resolveInputValueInto(resolved map[string]any, key string, value any, runContext *RunContext) {
 	switch typed := value.(type) {
 	case string:
 		contextValue, ok := runContext.Resolve(typed)
 		if !ok {
-			return value
+			resolved[key] = value
+			return
 		}
-		return contextValue.Value
+		resolved[key] = contextValue.Value
 	case map[string]any:
-		return resolveInputs(typed, runContext)
+		resolved[key] = resolveInputs(typed, runContext)
 	case []any:
-		resolved := make([]any, 0, len(typed))
+		resolvedSlice := make([]any, 0, len(typed))
 		for _, item := range typed {
-			resolved = append(resolved, resolveInputValue(item, runContext))
+			wrapped := make(map[string]any, 1)
+			resolveInputValueInto(wrapped, key, item, runContext)
+			resolvedSlice = append(resolvedSlice, wrapped[key])
 		}
-		return resolved
+		resolved[key] = resolvedSlice
 	default:
-		return value
+		resolved[key] = value
 	}
 }
 
@@ -179,4 +184,15 @@ func requestRunContext(request ExecuteRequest) *RunContext {
 	}
 
 	return NewRunContext()
+}
+
+func minimalToolEnvironment() []string {
+	env := []string{}
+	for _, key := range []string{"PATH", "HOME", "TMPDIR", "TEMP", "TMP"} {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+
+	return env
 }

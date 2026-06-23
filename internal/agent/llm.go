@@ -28,6 +28,12 @@ type Planner interface {
 	NextAction(ctx context.Context, request PlanRequest) (PlannerAction, error)
 }
 
+type plannerTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"input_schema"`
+}
+
 type OpenAIPlanner struct {
 	client openai.Client
 	model  string
@@ -81,7 +87,7 @@ func buildPlannerPrompt(request PlanRequest) ([]byte, error) {
 	prompt, err := json.Marshal(map[string]any{
 		"instructions": request.Instructions,
 		"message":      request.Message,
-		"tools":        request.Tools,
+		"tools":        plannerTools(request.Tools),
 		"observations": request.Observations,
 		"allowed_actions": []string{
 			string(ActionTypeCallTool),
@@ -93,6 +99,19 @@ func buildPlannerPrompt(request PlanRequest) ([]byte, error) {
 	}
 
 	return prompt, nil
+}
+
+func plannerTools(tools []toolcatalog.Tool) []plannerTool {
+	promptTools := make([]plannerTool, 0, len(tools))
+	for _, tool := range tools {
+		promptTools = append(promptTools, plannerTool{
+			Name:        tool.Name,
+			Description: tool.Description,
+			InputSchema: tool.InputSchema,
+		})
+	}
+
+	return promptTools
 }
 
 func validatePlannerAction(action PlannerAction) error {

@@ -6,6 +6,8 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
+const responseStatusField = "status"
+
 type Handler struct {
 	service     Service
 	environment string
@@ -17,10 +19,10 @@ func NewHandler(service Service, environment string) Handler {
 
 func (handler Handler) Readyz(c fiber.Ctx) error {
 	if handler.service.Ready(c.Context()) != nil {
-		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"status": "error"})
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{responseStatusField: DependencyStatusError})
 	}
 
-	return c.Status(http.StatusOK).JSON(fiber.Map{"status": "ok"})
+	return c.Status(http.StatusOK).JSON(fiber.Map{responseStatusField: DependencyStatusOK})
 }
 
 func (handler Handler) Status(c fiber.Ctx) error {

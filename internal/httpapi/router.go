@@ -6,6 +6,12 @@ import (
 	"orderbuddy-ai/backend/internal/status"
 )
 
+const (
+	HealthzPath = "/healthz"
+	ReadyzPath  = "/readyz"
+	StatusPath  = "/api/status"
+)
+
 type RouterConfig struct {
 	StatusHandler status.Handler
 }
@@ -13,8 +19,8 @@ type RouterConfig struct {
 func NewRouter(config RouterConfig) *fiber.App {
 	app := fiber.New()
 	app.Use(withCORS)
-	app.Get("/healthz", healthz)
-	app.Get("/readyz", config.StatusHandler.Readyz)
-	app.Get("/api/status", config.StatusHandler.Status)
+	app.Get(HealthzPath, healthz)
+	app.Get(ReadyzPath, config.StatusHandler.Readyz)
+	app.Get(StatusPath, config.StatusHandler.Status)
 	return app
 }

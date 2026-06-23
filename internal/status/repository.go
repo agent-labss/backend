@@ -3,5 +3,5 @@ package status
 import "context"
 
 type DatabasePinger interface {
-	Ping(context.Context) error
+	Ping(ctx context.Context) error
 }

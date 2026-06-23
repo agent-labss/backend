@@ -2,7 +2,6 @@ package status
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,16 +9,29 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
-func TestHandlerReadyzReturnsOKWhenDatabasePings(t *testing.T) {
-	handler := NewHandler(NewService(&fakeDatabase{}), "test")
-	app := fiber.New()
-	app.Get("/readyz", handler.Readyz)
+const (
+	readyzPath = "/readyz"
+	statusPath = "/api/status"
+)
 
-	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/readyz", nil))
+func closeResponseBody(t *testing.T, resp *http.Response) {
+	t.Helper()
+
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func TestHandlerReadyzReturnsOKWhenDatabasePings(t *testing.T) {
+	handler := NewHandler(NewService(&fakeDatabase{}), testEnvironment)
+	app := fiber.New()
+	app.Get(readyzPath, handler.Readyz)
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, readyzPath, nil))
 	if err != nil {
 		t.Fatalf("app.Test() error = %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(t, resp)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
@@ -27,15 +39,15 @@ func TestHandlerReadyzReturnsOKWhenDatabasePings(t *testing.T) {
 }
 
 func TestHandlerReadyzReturnsServiceUnavailableWhenDatabaseFails(t *testing.T) {
-	handler := NewHandler(NewService(&fakeDatabase{err: errors.New("database unavailable")}), "test")
+	handler := NewHandler(NewService(&fakeDatabase{err: errDatabaseUnavailable}), testEnvironment)
 	app := fiber.New()
-	app.Get("/readyz", handler.Readyz)
+	app.Get(readyzPath, handler.Readyz)
 
-	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, readyzPath, nil))
 	if err != nil {
 		t.Fatalf("app.Test() error = %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(t, resp)
 
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusServiceUnavailable)
@@ -43,15 +55,15 @@ func TestHandlerReadyzReturnsServiceUnavailableWhenDatabaseFails(t *testing.T) {
 }
 
 func TestHandlerStatusReturnsDatabaseOK(t *testing.T) {
-	handler := NewHandler(NewService(&fakeDatabase{}), "test")
+	handler := NewHandler(NewService(&fakeDatabase{}), testEnvironment)
 	app := fiber.New()
-	app.Get("/api/status", handler.Status)
+	app.Get(statusPath, handler.Status)
 
-	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, statusPath, nil))
 	if err != nil {
 		t.Fatalf("app.Test() error = %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(t, resp)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
@@ -64,24 +76,24 @@ func TestHandlerStatusReturnsDatabaseOK(t *testing.T) {
 	if response.Service != "ai-backend" {
 		t.Fatalf("Service = %q, want %q", response.Service, "ai-backend")
 	}
-	if response.Environment != "test" {
-		t.Fatalf("Environment = %q, want %q", response.Environment, "test")
+	if response.Environment != testEnvironment {
+		t.Fatalf("Environment = %q, want %q", response.Environment, testEnvironment)
 	}
-	if response.Database.Status != "ok" {
-		t.Fatalf("Database.Status = %q, want %q", response.Database.Status, "ok")
+	if response.Database.Status != DependencyStatusOK {
+		t.Fatalf("Database.Status = %q, want %q", response.Database.Status, DependencyStatusOK)
 	}
 }
 
 func TestHandlerStatusReturnsDatabaseErrorWithOKHTTPStatus(t *testing.T) {
-	handler := NewHandler(NewService(&fakeDatabase{err: errors.New("database unavailable")}), "test")
+	handler := NewHandler(NewService(&fakeDatabase{err: errDatabaseUnavailable}), testEnvironment)
 	app := fiber.New()
-	app.Get("/api/status", handler.Status)
+	app.Get(statusPath, handler.Status)
 
-	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, statusPath, nil))
 	if err != nil {
 		t.Fatalf("app.Test() error = %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(t, resp)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
@@ -91,7 +103,7 @@ func TestHandlerStatusReturnsDatabaseErrorWithOKHTTPStatus(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		t.Fatalf("Decode() error = %v", err)
 	}
-	if response.Database.Status != "error" {
-		t.Fatalf("Database.Status = %q, want %q", response.Database.Status, "error")
+	if response.Database.Status != DependencyStatusError {
+		t.Fatalf("Database.Status = %q, want %q", response.Database.Status, DependencyStatusError)
 	}
 }

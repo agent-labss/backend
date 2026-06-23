@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+const testEnvironment = "test"
+
+var errDatabaseUnavailable = errors.New("database unavailable")
+
 type fakeDatabase struct {
 	err   error
 	calls int
@@ -31,14 +35,13 @@ func TestServiceReadyReturnsNilWhenDatabasePings(t *testing.T) {
 }
 
 func TestServiceReadyReturnsErrorWhenDatabaseFails(t *testing.T) {
-	expectedErr := errors.New("database unavailable")
-	database := &fakeDatabase{err: expectedErr}
+	database := &fakeDatabase{err: errDatabaseUnavailable}
 	service := NewService(database)
 
 	err := service.Ready(context.Background())
 
-	if !errors.Is(err, expectedErr) {
-		t.Fatalf("Ready() error = %v, want %v", err, expectedErr)
+	if !errors.Is(err, errDatabaseUnavailable) {
+		t.Fatalf("Ready() error = %v, want %v", err, errDatabaseUnavailable)
 	}
 	if database.calls != 1 {
 		t.Fatalf("database calls = %d, want 1", database.calls)
@@ -59,16 +62,16 @@ func TestServiceStatusReportsDatabaseOK(t *testing.T) {
 	database := &fakeDatabase{}
 	service := NewService(database)
 
-	response := service.Status(context.Background(), "test")
+	response := service.Status(context.Background(), testEnvironment)
 
 	if response.Service != serviceName {
 		t.Fatalf("Service = %q, want %q", response.Service, serviceName)
 	}
-	if response.Environment != "test" {
-		t.Fatalf("Environment = %q, want %q", response.Environment, "test")
+	if response.Environment != testEnvironment {
+		t.Fatalf("Environment = %q, want %q", response.Environment, testEnvironment)
 	}
-	if response.Database.Status != "ok" {
-		t.Fatalf("Database.Status = %q, want %q", response.Database.Status, "ok")
+	if response.Database.Status != DependencyStatusOK {
+		t.Fatalf("Database.Status = %q, want %q", response.Database.Status, DependencyStatusOK)
 	}
 	if database.calls != 1 {
 		t.Fatalf("database calls = %d, want 1", database.calls)
@@ -76,19 +79,19 @@ func TestServiceStatusReportsDatabaseOK(t *testing.T) {
 }
 
 func TestServiceStatusReportsDatabaseError(t *testing.T) {
-	database := &fakeDatabase{err: errors.New("database unavailable")}
+	database := &fakeDatabase{err: errDatabaseUnavailable}
 	service := NewService(database)
 
-	response := service.Status(context.Background(), "test")
+	response := service.Status(context.Background(), testEnvironment)
 
 	if response.Service != serviceName {
 		t.Fatalf("Service = %q, want %q", response.Service, serviceName)
 	}
-	if response.Environment != "test" {
-		t.Fatalf("Environment = %q, want %q", response.Environment, "test")
+	if response.Environment != testEnvironment {
+		t.Fatalf("Environment = %q, want %q", response.Environment, testEnvironment)
 	}
-	if response.Database.Status != "error" {
-		t.Fatalf("Database.Status = %q, want %q", response.Database.Status, "error")
+	if response.Database.Status != DependencyStatusError {
+		t.Fatalf("Database.Status = %q, want %q", response.Database.Status, DependencyStatusError)
 	}
 	if database.calls != 1 {
 		t.Fatalf("database calls = %d, want 1", database.calls)

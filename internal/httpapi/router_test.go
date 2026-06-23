@@ -11,7 +11,15 @@ import (
 
 type fakeDatabase struct{}
 
-func (database *fakeDatabase) Ping(ctx context.Context) error {
+func closeResponseBody(t *testing.T, resp *http.Response) {
+	t.Helper()
+
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func (database *fakeDatabase) Ping(_ context.Context) error {
 	return nil
 }
 
@@ -20,7 +28,7 @@ func TestHealthzReturnsOK(t *testing.T) {
 		StatusHandler: status.NewHandler(status.NewService(&fakeDatabase{}), "test"),
 	})
 
-	req, err := http.NewRequest(http.MethodGet, "/healthz", nil)
+	req, err := http.NewRequest(http.MethodGet, HealthzPath, nil)
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
@@ -29,7 +37,7 @@ func TestHealthzReturnsOK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Test() error = %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(t, resp)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
@@ -40,8 +48,8 @@ func TestHealthzReturnsOK(t *testing.T) {
 		t.Fatalf("Decode() error = %v", err)
 	}
 
-	if body["status"] != "ok" {
-		t.Fatalf("status = %q, want %q", body["status"], "ok")
+	if body[responseStatusField] != responseStatusOK {
+		t.Fatalf("status = %q, want %q", body[responseStatusField], responseStatusOK)
 	}
 }
 
@@ -50,7 +58,7 @@ func TestOptionsRequestReturnsCORSHeaders(t *testing.T) {
 		StatusHandler: status.NewHandler(status.NewService(&fakeDatabase{}), "test"),
 	})
 
-	req, err := http.NewRequest(http.MethodOptions, "/api/status", nil)
+	req, err := http.NewRequest(http.MethodOptions, StatusPath, nil)
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
@@ -59,13 +67,13 @@ func TestOptionsRequestReturnsCORSHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Test() error = %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(t, resp)
 
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusNoContent)
 	}
 
-	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
-		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, "*")
+	if got := resp.Header.Get(headerAccessControlAllowOrigin); got != corsAllowedOrigin {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, corsAllowedOrigin)
 	}
 }

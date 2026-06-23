@@ -3,10 +3,20 @@ package status
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
 const serviceName = "ai-backend"
+
+const (
+	DependencyStatusOK    DependencyStatusValue = "ok"
+	DependencyStatusError DependencyStatusValue = "error"
+)
+
+var ErrDatabaseMissing = errors.New("database is missing")
+
+type DependencyStatusValue string
 
 type Service struct {
 	database DatabasePinger
@@ -19,7 +29,7 @@ type Response struct {
 }
 
 type DependencyStatus struct {
-	Status string `json:"status"`
+	Status DependencyStatusValue `json:"status"`
 }
 
 func NewService(database DatabasePinger) Service {
@@ -31,9 +41,9 @@ func (service Service) Ready(parent context.Context) error {
 }
 
 func (service Service) Status(parent context.Context, environment string) Response {
-	databaseStatus := "ok"
+	databaseStatus := DependencyStatusOK
 	if service.pingDatabase(parent) != nil {
-		databaseStatus = "error"
+		databaseStatus = DependencyStatusError
 	}
 
 	return Response{
@@ -47,11 +57,15 @@ func (service Service) Status(parent context.Context, environment string) Respon
 
 func (service Service) pingDatabase(parent context.Context) error {
 	if service.database == nil {
-		return errors.New("database is missing")
+		return ErrDatabaseMissing
 	}
 
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 
-	return service.database.Ping(ctx)
+	if err := service.database.Ping(ctx); err != nil {
+		return fmt.Errorf("ping database: %w", err)
+	}
+
+	return nil
 }

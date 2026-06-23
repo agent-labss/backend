@@ -63,7 +63,8 @@ func loadPackages(t *testing.T) []packageInfo {
 
 	output, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			t.Fatalf("go list failed: %s", strings.TrimSpace(string(exitErr.Stderr)))
 		}
 		t.Fatalf("go list failed: %v", err)

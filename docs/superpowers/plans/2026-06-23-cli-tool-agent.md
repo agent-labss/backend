@@ -1357,7 +1357,9 @@ git commit -m "Add tool catalog HTTP handlers"
 - Create: `internal/agent/context.go`
 - Create: `internal/agent/context_test.go`
 
-- [ ] **Step 1: Write redaction tests**
+Implementation note: the final redaction/context implementation avoids `ireturn` by making `RedactJSONValue` generic and returning a concrete `ContextValue` from `RunContext.Resolve`.
+
+- [x] **Step 1: Write redaction tests**
 
 Create `internal/agent/redact_test.go`:
 
@@ -1405,7 +1407,7 @@ func TestRedactJSONValueRemovesSensitiveKeys(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Write context tests**
+- [x] **Step 2: Write context tests**
 
 Create `internal/agent/context_test.go`:
 
@@ -1443,7 +1445,7 @@ func TestRunContextResolveLeavesPlainValuesUnresolved(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run tests to verify failure**
+- [x] **Step 3: Run tests to verify failure**
 
 Run:
 
@@ -1453,7 +1455,7 @@ go test ./internal/agent
 
 Expected: fail because the package has no implementation.
 
-- [ ] **Step 4: Implement agent types**
+- [x] **Step 4: Implement agent types**
 
 Create `internal/agent/types.go`:
 
@@ -1577,7 +1579,7 @@ type ToolError struct {
 }
 ```
 
-- [ ] **Step 5: Implement redaction**
+- [x] **Step 5: Implement redaction**
 
 Create `internal/agent/redact.go`:
 
@@ -1647,7 +1649,7 @@ func isSensitiveKey(key string) bool {
 }
 ```
 
-- [ ] **Step 6: Implement run context**
+- [x] **Step 6: Implement run context**
 
 Create `internal/agent/context.go`:
 
@@ -1690,7 +1692,7 @@ func (context *RunContext) Resolve(value string) (any, bool) {
 }
 ```
 
-- [ ] **Step 7: Run tests**
+- [x] **Step 7: Run tests**
 
 Run:
 
@@ -1700,7 +1702,7 @@ go test ./internal/agent
 
 Expected: pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add internal/agent/types.go internal/agent/redact.go internal/agent/redact_test.go internal/agent/context.go internal/agent/context_test.go

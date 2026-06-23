@@ -146,21 +146,31 @@ func outputsFromToolResult(toolName string, runContext *RunContext, result ToolR
 func resolveInputs(inputs map[string]any, runContext *RunContext) map[string]any {
 	resolved := make(map[string]any, len(inputs))
 	for key, value := range inputs {
-		stringValue, ok := value.(string)
-		if !ok {
-			resolved[key] = value
-			continue
-		}
-
-		contextValue, ok := runContext.Resolve(stringValue)
-		if !ok {
-			resolved[key] = value
-			continue
-		}
-		resolved[key] = contextValue.Value
+		resolved[key] = resolveInputValue(value, runContext)
 	}
 
 	return resolved
+}
+
+func resolveInputValue(value any, runContext *RunContext) any {
+	switch typed := value.(type) {
+	case string:
+		contextValue, ok := runContext.Resolve(typed)
+		if !ok {
+			return value
+		}
+		return contextValue.Value
+	case map[string]any:
+		return resolveInputs(typed, runContext)
+	case []any:
+		resolved := make([]any, 0, len(typed))
+		for _, item := range typed {
+			resolved = append(resolved, resolveInputValue(item, runContext))
+		}
+		return resolved
+	default:
+		return value
+	}
 }
 
 func requestRunContext(request ExecuteRequest) *RunContext {

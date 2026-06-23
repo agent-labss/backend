@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +50,58 @@ printf '%s\n' '{"status":"ok","outputs":{"session":{"sensitive":true,"value":"`+
 	if !ok || resolved.Value != testCookieValue {
 		t.Fatalf("resolved session = %v, %v; want %s, true", resolved.Value, ok, testCookieValue)
 	}
+}
+
+func TestCLIExecutorResolvesNestedContextReferences(t *testing.T) {
+	commandPath := writeToolScript(t, `#!/usr/bin/env sh
+python3 -c '
+import json
+import sys
+
+envelope = json.load(sys.stdin)
+print(json.dumps({"status":"ok","outputs":{"received":{"sensitive":False,"value":envelope["inputs"]}}}))
+'
+`)
+
+	executor := NewCLIExecutor()
+	runContext := NewRunContext()
+	runContext.Store("login", "session", map[string]any{
+		"access_token": testSecretToken,
+		"user": map[string]any{
+			"id": "u_123",
+		},
+	})
+
+	observation, err := executor.Execute(context.Background(), ExecuteRequest{
+		RunID:     testRunID,
+		StepID:    testStepID,
+		StepOrder: 1,
+		Tool:      toolcatalog.Tool{Name: "nested", CommandPath: commandPath, TimeoutMS: 1000},
+		Inputs: map[string]any{
+			"auth": map[string]any{
+				"session": testSessionRef,
+			},
+			"requests": []any{
+				map[string]any{"session": testSessionRef},
+			},
+		},
+		RunContext: runContext,
+	})
+
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	received, ok := observation.Outputs["received"].(map[string]any)
+	if !ok {
+		t.Fatalf("received output = %T, want map[string]any", observation.Outputs["received"])
+	}
+	assertNestedSessionResolved(t, received["auth"], []string{"session"})
+	requests, ok := received["requests"].([]any)
+	if !ok || len(requests) != 1 {
+		t.Fatalf("requests = %#v, want one-element array", received["requests"])
+	}
+	assertNestedSessionResolved(t, requests[0], []string{"session"})
 }
 
 func TestCLIExecutorFailsOnInvalidJSON(t *testing.T) {
@@ -130,6 +183,32 @@ func TestCLIExecutorTimesOut(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("Execute() error = %q, want timeout context", err)
+	}
+}
+
+func assertNestedSessionResolved(t *testing.T, value any, path []string) {
+	t.Helper()
+
+	current := value
+	for _, key := range path {
+		object, ok := current.(map[string]any)
+		if !ok {
+			t.Fatalf("path %v reached %T, want map[string]any", path, current)
+		}
+		current = object[key]
+	}
+
+	session, ok := current.(map[string]any)
+	if !ok {
+		t.Fatalf("session = %T, want resolved object", current)
+	}
+	if session["access_token"] != redactedValue {
+		encoded, _ := json.Marshal(session)
+		t.Fatalf("session = %s, want redacted access_token", encoded)
+	}
+	user, ok := session["user"].(map[string]any)
+	if !ok || user["id"] != "u_123" {
+		t.Fatalf("session.user = %#v, want resolved user", session["user"])
 	}
 }
 

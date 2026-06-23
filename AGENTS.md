@@ -29,3 +29,30 @@ This repository currently has no commit history, so no project-specific commit c
 ## Security & Configuration Tips
 
 Do not commit real database credentials. Keep secrets in environment variables and document new required settings near the code that reads them. Preserve readiness behavior so `/readyz` fails when PostgreSQL is unavailable, while `/healthz` remains a lightweight process check.
+
+## AI Change Discipline
+
+This repository uses strict local guardrails for AI-assisted coding. Treat these as default-deny rules.
+
+Do not add a new direct dependency, new `internal/` package, new architectural layer, new interface, or new enum-like status value unless you first explain the need, alternatives, and blast radius, then receive approval.
+
+Keep package ownership intact:
+
+- `cmd/server` loads config and calls `app.Run`.
+- `internal/app` wires config, postgres, status, and HTTP routing.
+- `internal/config` reads environment settings only.
+- `internal/httpapi` owns Fiber routes, middleware, and HTTP helpers.
+- `internal/platform/postgres` owns PostgreSQL connectivity only.
+- `internal/status` owns health/readiness/status behavior only.
+
+Do not bypass package boundaries. In particular, HTTP handlers must not import `internal/platform/postgres`, status logic must not import HTTP or postgres packages, and platform packages must not import application or HTTP packages.
+
+Avoid stringly typed behavior. Route paths, repeated JSON field names, status strings, and enum-like values must be constants or typed constants in the package that owns them.
+
+Every code change must finish by running:
+
+```bash
+./scripts/repo-guard.sh
+```
+
+If the guard fails, the change is not complete. Fix the failure or discuss the exception before proceeding.

@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,6 +54,57 @@ func TestOpenAIPlannerUsesBaseURL(t *testing.T) {
 	}
 }
 
+func TestOpenAIPlannerSendsAttachmentContent(t *testing.T) {
+	const (
+		testAPIKey = "sk-test"
+		testModel  = "third-party-model"
+	)
+
+	called := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recordPlannerTestCall(called)
+		payload, ok := decodePlannerRequestPayload(t, w, r, testAPIKey, testModel)
+		if !ok {
+			return
+		}
+		assertPlannerRequestIncludesContent(t, w, payload, "input_file", "input_image")
+		writePlannerTestResponse(t, w, testModel)
+	}))
+	defer server.Close()
+
+	planner := NewOpenAIPlanner(testAPIKey, testModel, server.URL+"/openai/v1")
+	_, err := planner.NextAction(context.Background(), PlanRequest{
+		Instructions: "read attachments",
+		Message:      "update catalog",
+		Attachments: []Attachment{
+			{
+				ID:       "att_pdf",
+				Filename: "merchant_catalog.pdf",
+				MIMEType: "application/pdf",
+				Kind:     AttachmentKindPDF,
+				Size:     8,
+				Data:     base64.StdEncoding.EncodeToString([]byte("%PDF-1.7")),
+			},
+			{
+				ID:       "att_img",
+				Filename: "menu.png",
+				MIMEType: "image/png",
+				Kind:     AttachmentKindImage,
+				Size:     7,
+				Data:     base64.StdEncoding.EncodeToString([]byte("PNGDATA")),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NextAction() error = %v", err)
+	}
+	select {
+	case <-called:
+	default:
+		t.Fatal("test server was not called")
+	}
+}
+
 func recordPlannerTestCall(called chan<- struct{}) {
 	select {
 	case called <- struct{}{}:
@@ -59,6 +113,28 @@ func recordPlannerTestCall(called chan<- struct{}) {
 }
 
 func assertPlannerRequest(t *testing.T, w http.ResponseWriter, r *http.Request, apiKey string, model string) bool {
+	t.Helper()
+	_, ok := decodePlannerRequestPayload(t, w, r, apiKey, model)
+	return ok
+}
+
+func decodePlannerRequestPayload(t *testing.T, w http.ResponseWriter, r *http.Request, apiKey string, model string) (map[string]any, bool) {
+	t.Helper()
+	if !assertPlannerHTTPEnvelope(t, w, r, apiKey) {
+		return nil, false
+	}
+	payload, raw, ok := decodePlannerPayloadBody(t, w, r)
+	if !ok {
+		return nil, false
+	}
+	if !assertPlannerPayloadFields(t, w, payload, model) {
+		return nil, false
+	}
+
+	return raw, true
+}
+
+func assertPlannerHTTPEnvelope(t *testing.T, w http.ResponseWriter, r *http.Request, apiKey string) bool {
 	t.Helper()
 	if r.Method != http.MethodPost {
 		t.Errorf("method = %s, want %s", r.Method, http.MethodPost)
@@ -75,20 +151,45 @@ func assertPlannerRequest(t *testing.T, w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "wrong auth", http.StatusUnauthorized)
 		return false
 	}
+	return true
+}
 
-	var payload struct {
-		Model string `json:"model"`
-		Text  struct {
-			Format struct {
-				Type string `json:"type"`
-			} `json:"format"`
-		} `json:"text"`
+type plannerPayloadFields struct {
+	Model string `json:"model"`
+	Text  struct {
+		Format struct {
+			Type string `json:"type"`
+		} `json:"format"`
+	} `json:"text"`
+}
+
+func decodePlannerPayloadBody(t *testing.T, w http.ResponseWriter, r *http.Request) (plannerPayloadFields, map[string]any, bool) {
+	t.Helper()
+
+	var payload plannerPayloadFields
+	var raw map[string]any
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Errorf("ReadAll request body error = %v", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return payload, nil, false
 	}
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(rawBody, &payload); err != nil {
 		t.Errorf("Decode request body error = %v", err)
 		http.Error(w, "bad request", http.StatusBadRequest)
-		return false
+		return payload, nil, false
 	}
+	if err := json.Unmarshal(rawBody, &raw); err != nil {
+		t.Errorf("Unmarshal request payload error = %v", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return payload, nil, false
+	}
+
+	return payload, raw, true
+}
+
+func assertPlannerPayloadFields(t *testing.T, w http.ResponseWriter, payload plannerPayloadFields, model string) bool {
+	t.Helper()
 	if payload.Model != model {
 		t.Errorf("model = %q, want %q", payload.Model, model)
 		http.Error(w, "wrong model", http.StatusBadRequest)
@@ -99,8 +200,41 @@ func assertPlannerRequest(t *testing.T, w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "missing structured output format", http.StatusBadRequest)
 		return false
 	}
-
 	return true
+}
+
+func assertPlannerRequestIncludesContent(t *testing.T, w http.ResponseWriter, payload map[string]any, wantTypes ...string) {
+	t.Helper()
+
+	raw, err := json.Marshal(payload["input"])
+	if err != nil {
+		t.Errorf("Marshal input error = %v", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	input := string(raw)
+	for _, wantType := range wantTypes {
+		if !strings.Contains(input, `"type":"`+wantType+`"`) {
+			t.Errorf("input = %s, want content type %s", input, wantType)
+			http.Error(w, "missing input content", http.StatusBadRequest)
+			return
+		}
+	}
+	if !strings.Contains(input, `"filename":"merchant_catalog.pdf"`) {
+		t.Errorf("input = %s, want PDF filename", input)
+		http.Error(w, "missing file filename", http.StatusBadRequest)
+		return
+	}
+	if !strings.Contains(input, `"file_data":"data:application/pdf;base64,`) {
+		t.Errorf("input = %s, want PDF data URL", input)
+		http.Error(w, "missing file data URL", http.StatusBadRequest)
+		return
+	}
+	if !strings.Contains(input, `"image_url":"data:image/png;base64,`) {
+		t.Errorf("input = %s, want image data URL", input)
+		http.Error(w, "missing image data URL", http.StatusBadRequest)
+		return
+	}
 }
 
 func writePlannerTestResponse(t *testing.T, w http.ResponseWriter, model string) {
@@ -226,6 +360,44 @@ func TestBuildPlannerPromptIncludesOnlyPlannerToolFields(t *testing.T) {
 	requirePlannerToolField(t, tool, "description", "Export report.")
 	requirePlannerToolIncludesField(t, tool, "input_schema")
 	requirePlannerToolOmitsFields(t, tool, "id", "command_path", "output_schema", "timeout_ms", "status", "created_at", "updated_at")
+}
+
+func TestBuildPlannerPromptIncludesAttachmentMetadataWithoutData(t *testing.T) {
+	rawData := base64.StdEncoding.EncodeToString([]byte("%PDF-1.7"))
+	prompt, err := buildPlannerPrompt(PlanRequest{
+		Instructions: "use attachments",
+		Message:      "update catalog",
+		Attachments: []Attachment{{
+			ID:       "att_pdf",
+			Filename: "merchant_catalog.pdf",
+			MIMEType: "application/pdf",
+			Kind:     AttachmentKindPDF,
+			Size:     8,
+			Data:     rawData,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("buildPlannerPrompt() error = %v", err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(prompt, &body); err != nil {
+		t.Fatalf("Unmarshal prompt error = %v", err)
+	}
+	attachments, ok := body["attachments"].([]any)
+	if !ok || len(attachments) != 1 {
+		t.Fatalf("attachments = %#v, want one attachment", body["attachments"])
+	}
+	attachment, ok := attachments[0].(map[string]any)
+	if !ok {
+		t.Fatalf("attachment = %T, want map[string]any", attachments[0])
+	}
+	if attachment["filename"] != "merchant_catalog.pdf" {
+		t.Fatalf("filename = %v, want merchant_catalog.pdf", attachment["filename"])
+	}
+	if strings.Contains(string(prompt), rawData) {
+		t.Fatalf("prompt leaked attachment data: %s", prompt)
+	}
 }
 
 func requirePlannerPromptTool(t *testing.T, prompt []byte) map[string]any {

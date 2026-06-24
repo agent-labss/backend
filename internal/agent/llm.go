@@ -20,6 +20,7 @@ var ErrInvalidPlannerAction = errors.New("invalid planner action")
 type PlanRequest struct {
 	Instructions string
 	Message      string
+	Attachments  []Attachment
 	Tools        []toolcatalog.Tool
 	Observations []Observation
 }
@@ -59,10 +60,8 @@ func (planner OpenAIPlanner) NextAction(ctx context.Context, request PlanRequest
 
 	response, err := planner.client.Responses.New(ctx, responses.ResponseNewParams{
 		Model: shared.ResponsesModel(planner.model),
-		Input: responses.ResponseNewParamsInputUnion{
-			OfString: openai.String(string(prompt)),
-		},
-		Text: plannerResponseTextConfig(),
+		Input: plannerResponseInput(prompt, request.Attachments),
+		Text:  plannerResponseTextConfig(),
 	})
 	if err != nil {
 		return PlannerAction{}, fmt.Errorf("openai response: %w", err)
@@ -88,6 +87,7 @@ func buildPlannerPrompt(request PlanRequest) ([]byte, error) {
 	prompt, err := json.Marshal(map[string]any{
 		"instructions":    request.Instructions,
 		"message":         request.Message,
+		"attachments":     attachmentPromptViews(request.Attachments),
 		"tools":           plannerTools(request.Tools),
 		"observations":    request.Observations,
 		"output_contract": "Return exactly one JSON object for the next planner action. Do not include Markdown, prose, fenced JSON, refusals, or partial output.",
@@ -101,6 +101,60 @@ func buildPlannerPrompt(request PlanRequest) ([]byte, error) {
 	}
 
 	return prompt, nil
+}
+
+func plannerResponseInput(prompt []byte, attachments []Attachment) responses.ResponseNewParamsInputUnion {
+	if len(attachments) == 0 {
+		return responses.ResponseNewParamsInputUnion{OfString: openai.String(string(prompt))}
+	}
+
+	content := responses.ResponseInputMessageContentListParam{
+		responses.ResponseInputContentParamOfInputText(string(prompt)),
+	}
+	for _, attachment := range attachments {
+		content = append(content, attachmentInputContent(attachment))
+	}
+
+	return responses.ResponseNewParamsInputUnion{
+		OfInputItemList: responses.ResponseInputParam{
+			responses.ResponseInputItemParamOfMessage(content, responses.EasyInputMessageRoleUser),
+		},
+	}
+}
+
+func attachmentInputContent(attachment Attachment) responses.ResponseInputContentUnionParam {
+	if attachment.Kind == AttachmentKindImage {
+		image := responses.ResponseInputImageParam{
+			Detail: responses.ResponseInputImageDetailAuto,
+		}
+		if strings.TrimSpace(attachment.Data) != "" {
+			image.ImageURL = openai.String("data:" + attachment.MIMEType + ";base64," + attachment.Data)
+		}
+		if strings.TrimSpace(attachment.FileID) != "" {
+			image.FileID = openai.String(attachment.FileID)
+		}
+		return responses.ResponseInputContentUnionParam{OfInputImage: &image}
+	}
+
+	file := responses.ResponseInputFileParam{
+		Filename: openai.String(attachment.Filename),
+		Detail:   responses.ResponseInputFileDetailLow,
+	}
+	if strings.TrimSpace(attachment.Data) != "" {
+		file.FileData = openai.String("data:" + strings.TrimSpace(attachment.MIMEType) + ";base64," + attachment.Data)
+	}
+	if strings.TrimSpace(attachment.FileID) != "" {
+		file.FileID = openai.String(attachment.FileID)
+	}
+	return responses.ResponseInputContentUnionParam{OfInputFile: &file}
+}
+
+func attachmentPromptViews(attachments []Attachment) []map[string]any {
+	views := make([]map[string]any, 0, len(attachments))
+	for _, attachment := range attachments {
+		views = append(views, attachmentPromptView(attachment))
+	}
+	return views
 }
 
 func plannerResponseTextConfig() responses.ResponseTextConfigParam {

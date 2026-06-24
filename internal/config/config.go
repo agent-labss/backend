@@ -8,44 +8,53 @@ import (
 )
 
 const (
-	DefaultAppEnv              = "development"
-	DefaultHTTPAddr            = ":8080"
-	DefaultDatabaseDriver      = "sqlite"
-	DefaultDatabaseURL         = "sqlite.db"
-	DefaultOpenAIBaseURL       = ""
-	DefaultOpenAIModel         = "gpt-5-mini"
-	DefaultTrustedToolDir      = "./tools"
-	DefaultAgentMaxSteps       = 8
-	DefaultAgentTotalTimeoutMS = 60000
+	DefaultAppEnv                 = "development"
+	DefaultHTTPAddr               = ":8080"
+	DefaultDatabaseDriver         = "sqlite"
+	DefaultDatabaseURL            = "sqlite.db"
+	DefaultOpenAIBaseURL          = ""
+	DefaultOpenAIModel            = "gpt-5-mini"
+	DefaultTrustedToolDir         = "./tools"
+	DefaultAgentMaxSteps          = 8
+	DefaultAgentTotalTimeoutMS    = 60000
+	DefaultAgentMaxFilesPerRun    = 5
+	DefaultAgentMaxFileBytes      = 10 * 1024 * 1024
+	DefaultAgentMaxTotalFileBytes = 25 * 1024 * 1024
 )
 
 type Config struct {
-	AppEnv              string
-	HTTPAddr            string
-	DatabaseDriver      string
-	DatabaseURL         string
-	OpenAIAPIKey        string
-	OpenAIBaseURL       string
-	OpenAIModel         string
-	TrustedToolDir      string
-	AgentMaxSteps       int
-	AgentTotalTimeoutMS int
+	AppEnv                 string
+	HTTPAddr               string
+	DatabaseDriver         string
+	DatabaseURL            string
+	OpenAIAPIKey           string
+	OpenAIBaseURL          string
+	OpenAIModel            string
+	TrustedToolDir         string
+	AgentMaxSteps          int
+	AgentTotalTimeoutMS    int
+	AgentMaxFilesPerRun    int
+	AgentMaxFileBytes      int
+	AgentMaxTotalFileBytes int
 }
 
 func Load() Config {
 	dotEnv := loadDotEnv(".env")
 
 	return Config{
-		AppEnv:              getEnv(dotEnv, "APP_ENV", DefaultAppEnv),
-		HTTPAddr:            getEnv(dotEnv, "HTTP_ADDR", DefaultHTTPAddr),
-		DatabaseDriver:      getEnv(dotEnv, "DATABASE_DRIVER", DefaultDatabaseDriver),
-		DatabaseURL:         getEnv(dotEnv, "DATABASE_URL", DefaultDatabaseURL),
-		OpenAIAPIKey:        getEnv(dotEnv, "OPENAI_API_KEY", ""),
-		OpenAIBaseURL:       getEnv(dotEnv, "OPENAI_BASE_URL", DefaultOpenAIBaseURL),
-		OpenAIModel:         getEnv(dotEnv, "OPENAI_MODEL", DefaultOpenAIModel),
-		TrustedToolDir:      getEnv(dotEnv, "TRUSTED_TOOL_DIR", DefaultTrustedToolDir),
-		AgentMaxSteps:       getPositiveIntEnv(dotEnv, "AGENT_MAX_STEPS", DefaultAgentMaxSteps),
-		AgentTotalTimeoutMS: getPositiveIntEnv(dotEnv, "AGENT_TOTAL_TIMEOUT_MS", DefaultAgentTotalTimeoutMS),
+		AppEnv:                 getEnv(dotEnv, "APP_ENV", DefaultAppEnv),
+		HTTPAddr:               getEnv(dotEnv, "HTTP_ADDR", DefaultHTTPAddr),
+		DatabaseDriver:         getEnv(dotEnv, "DATABASE_DRIVER", DefaultDatabaseDriver),
+		DatabaseURL:            getEnv(dotEnv, "DATABASE_URL", DefaultDatabaseURL),
+		OpenAIAPIKey:           getEnv(dotEnv, "OPENAI_API_KEY", ""),
+		OpenAIBaseURL:          getEnv(dotEnv, "OPENAI_BASE_URL", DefaultOpenAIBaseURL),
+		OpenAIModel:            getEnv(dotEnv, "OPENAI_MODEL", DefaultOpenAIModel),
+		TrustedToolDir:         getEnv(dotEnv, "TRUSTED_TOOL_DIR", DefaultTrustedToolDir),
+		AgentMaxSteps:          getPositiveIntEnv(dotEnv, "AGENT_MAX_STEPS", DefaultAgentMaxSteps),
+		AgentTotalTimeoutMS:    getPositiveIntEnv(dotEnv, "AGENT_TOTAL_TIMEOUT_MS", DefaultAgentTotalTimeoutMS),
+		AgentMaxFilesPerRun:    getPositiveIntEnv(dotEnv, "AGENT_MAX_FILES_PER_RUN", DefaultAgentMaxFilesPerRun),
+		AgentMaxFileBytes:      getPositiveIntEnv(dotEnv, "AGENT_MAX_FILE_BYTES", DefaultAgentMaxFileBytes),
+		AgentMaxTotalFileBytes: getPositiveIntEnv(dotEnv, "AGENT_MAX_TOTAL_FILE_BYTES", DefaultAgentMaxTotalFileBytes),
 	}
 }
 

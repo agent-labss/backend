@@ -91,5 +91,9 @@ func newAgentHandler(cfg config.Config, repository agent.Repository, catalog age
 		MaxSteps:     cfg.AgentMaxSteps,
 		TotalTimeout: time.Duration(cfg.AgentTotalTimeoutMS) * time.Millisecond,
 	})
-	return agent.NewHandler(service)
+	return agent.NewHandler(service, agent.UploadConfig{
+		MaxFiles:      cfg.AgentMaxFilesPerRun,
+		MaxFileBytes:  cfg.AgentMaxFileBytes,
+		MaxTotalBytes: cfg.AgentMaxTotalFileBytes,
+	})
 }

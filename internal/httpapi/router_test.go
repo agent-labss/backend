@@ -79,6 +79,16 @@ func TestAgentRunRouteIsRegistered(t *testing.T) {
 	assertRouteStatus(t, http.MethodPost, agent.AgentRunsPath, http.StatusOK)
 }
 
+func TestNewRouterUsesUploadBodyLimit(t *testing.T) {
+	app := NewRouter(RouterConfig{
+		StatusHandler: status.NewHandler(status.NewService(), "test"),
+	})
+
+	if app.Config().BodyLimit != uploadBodyLimit {
+		t.Fatalf("BodyLimit = %d, want %d", app.Config().BodyLimit, uploadBodyLimit)
+	}
+}
+
 func assertRouteStatus(t *testing.T, method string, path string, wantStatus int) {
 	t.Helper()
 

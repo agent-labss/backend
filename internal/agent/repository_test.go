@@ -18,7 +18,7 @@ const testToolID = "tool_1"
 func TestRepositoryPersistsRunAndStep(t *testing.T) {
 	repository := NewRepository(newTestDatabase(t))
 
-	run, err := repository.StartRun(context.Background(), "build a report")
+	run, err := repository.StartRun(context.Background(), CreateRunRecord{Message: "build a report"})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v, want nil", err)
 	}
@@ -54,7 +54,7 @@ func TestRepositoryRedactsMessageBeforePersistingRun(t *testing.T) {
 	repository := NewRepository(newTestDatabase(t))
 	message := "export report with Authorization: Bearer " + testSecretToken
 
-	run, err := repository.StartRun(context.Background(), message)
+	run, err := repository.StartRun(context.Background(), CreateRunRecord{Message: message})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v, want nil", err)
 	}
@@ -68,6 +68,82 @@ func TestRepositoryRedactsMessageBeforePersistingRun(t *testing.T) {
 	}
 	if !strings.Contains(record.Message, redactedValue) {
 		t.Fatalf("record.Message = %q, want redacted marker", record.Message)
+	}
+}
+
+func TestRepositoryPersistsRunAttachments(t *testing.T) {
+	repository := NewRepository(newTestDatabase(t))
+
+	run, err := repository.StartRun(context.Background(), CreateRunRecord{
+		Message: "update catalog",
+		Attachments: []Attachment{{
+			ID:       "att_test",
+			Filename: "merchant_catalog.pdf",
+			MIMEType: "application/pdf",
+			Kind:     AttachmentKindPDF,
+			Size:     123,
+			Data:     "raw-data-must-not-persist",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("StartRun() error = %v, want nil", err)
+	}
+
+	var records []database.AgentRunAttachment
+	if err := repository.database.WithContext(context.Background()).Where("run_id = ?", run.ID).Find(&records).Error; err != nil {
+		t.Fatalf("load attachments error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("len(records) = %d, want 1", len(records))
+	}
+	if records[0].Filename != "merchant_catalog.pdf" {
+		t.Fatalf("Filename = %q, want merchant_catalog.pdf", records[0].Filename)
+	}
+	if records[0].ProviderFileID != "" {
+		t.Fatalf("ProviderFileID = %q, want empty", records[0].ProviderFileID)
+	}
+}
+
+func TestRepositoryRollsBackRunWhenAttachmentPersistenceFails(t *testing.T) {
+	repository := NewRepository(newTestDatabase(t))
+
+	_, err := repository.StartRun(context.Background(), CreateRunRecord{
+		Message: "update catalog",
+		Attachments: []Attachment{
+			{
+				ID:       "att_duplicate",
+				Filename: "merchant_catalog.pdf",
+				MIMEType: "application/pdf",
+				Kind:     AttachmentKindPDF,
+				Size:     123,
+			},
+			{
+				ID:       "att_duplicate",
+				Filename: "merchant_catalog_2.pdf",
+				MIMEType: "application/pdf",
+				Kind:     AttachmentKindPDF,
+				Size:     456,
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("StartRun() error = nil, want duplicate attachment error")
+	}
+
+	var runCount int64
+	if err := repository.database.WithContext(context.Background()).Model(&database.AgentRun{}).Count(&runCount).Error; err != nil {
+		t.Fatalf("count runs error = %v", err)
+	}
+	if runCount != 0 {
+		t.Fatalf("run count = %d, want 0", runCount)
+	}
+
+	var attachmentCount int64
+	if err := repository.database.WithContext(context.Background()).Model(&database.AgentRunAttachment{}).Count(&attachmentCount).Error; err != nil {
+		t.Fatalf("count attachments error = %v", err)
+	}
+	if attachmentCount != 0 {
+		t.Fatalf("attachment count = %d, want 0", attachmentCount)
 	}
 }
 

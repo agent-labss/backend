@@ -28,18 +28,18 @@ func NewRepository(db *gorm.DB) Repository {
 	return Repository{database: db}
 }
 
-func (repository Repository) StartRun(ctx context.Context, message string) (Run, error) {
+func (repository Repository) StartRun(ctx context.Context, record CreateRunRecord) (Run, error) {
 	if repository.database == nil {
 		return Run{}, ErrDatabaseMissing
 	}
 
 	run := Run{
 		ID:        newRuntimeID("run"),
-		Message:   RedactText(message),
+		Message:   RedactText(record.Message),
 		Status:    RunStatusRunning,
 		StartedAt: time.Now().UTC(),
 	}
-	record := database.AgentRun{
+	runRecord := database.AgentRun{
 		ID:            run.ID,
 		Message:       run.Message,
 		Status:        string(run.Status),
@@ -48,11 +48,36 @@ func (repository Repository) StartRun(ctx context.Context, message string) (Run,
 		ErrorSummary:  "",
 		StartedAt:     run.StartedAt,
 	}
-	if err := typed.G[database.AgentRun](repository.database).Create(ctx, &record); err != nil {
-		return Run{}, fmt.Errorf("start run: %w", err)
+	if err := repository.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := typed.G[database.AgentRun](tx).Create(ctx, &runRecord); err != nil {
+			return fmt.Errorf("start run: %w", err)
+		}
+		return saveAttachments(ctx, tx, run.ID, record.Attachments)
+	}); err != nil {
+		return Run{}, fmt.Errorf("start run transaction: %w", err)
 	}
 
 	return run, nil
+}
+
+func saveAttachments(ctx context.Context, db *gorm.DB, runID string, attachments []Attachment) error {
+	for _, attachment := range attachments {
+		record := database.AgentRunAttachment{
+			ID:             attachment.ID,
+			RunID:          runID,
+			Filename:       RedactText(attachment.Filename),
+			MIMEType:       attachment.MIMEType,
+			Kind:           string(attachment.Kind),
+			SizeBytes:      attachment.Size,
+			ProviderFileID: attachment.FileID,
+			CreatedAt:      time.Now().UTC(),
+		}
+		if err := typed.G[database.AgentRunAttachment](db).Create(ctx, &record); err != nil {
+			return fmt.Errorf("save run attachment: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (repository Repository) FinishRun(ctx context.Context, run Run) error {

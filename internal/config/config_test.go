@@ -67,6 +67,21 @@ func TestLoadUsesAgentEnvironmentOverrides(t *testing.T) {
 	assertConfig(t, cfg, want)
 }
 
+func TestLoadUsesUploadLimitEnvironmentOverrides(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("AGENT_MAX_FILES_PER_RUN", "4")
+	t.Setenv("AGENT_MAX_FILE_BYTES", "1048576")
+	t.Setenv("AGENT_MAX_TOTAL_FILE_BYTES", "2097152")
+
+	cfg := Load()
+	want := defaultConfig()
+	want.AgentMaxFilesPerRun = 4
+	want.AgentMaxFileBytes = 1048576
+	want.AgentMaxTotalFileBytes = 2097152
+
+	assertConfig(t, cfg, want)
+}
+
 func TestLoadUsesDotEnvOverrides(t *testing.T) {
 	clearEnv(t)
 	chdirTemp(t)
@@ -81,6 +96,9 @@ OPENAI_MODEL=gpt-5-mini
 TRUSTED_TOOL_DIR=./tools
 AGENT_MAX_STEPS=5
 AGENT_TOTAL_TIMEOUT_MS=30000
+AGENT_MAX_FILES_PER_RUN=3
+AGENT_MAX_FILE_BYTES=512000
+AGENT_MAX_TOTAL_FILE_BYTES=1024000
 `)
 
 	cfg := Load()
@@ -92,6 +110,9 @@ AGENT_TOTAL_TIMEOUT_MS=30000
 	want.OpenAIBaseURL = testOpenAIBaseURL
 	want.AgentMaxSteps = 5
 	want.AgentTotalTimeoutMS = 30000
+	want.AgentMaxFilesPerRun = 3
+	want.AgentMaxFileBytes = 512000
+	want.AgentMaxTotalFileBytes = 1024000
 
 	assertConfig(t, cfg, want)
 }
@@ -114,6 +135,9 @@ func TestLoadFallsBackForInvalidAgentNumbers(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("AGENT_MAX_STEPS", "invalid")
 	t.Setenv("AGENT_TOTAL_TIMEOUT_MS", "-1")
+	t.Setenv("AGENT_MAX_FILES_PER_RUN", "0")
+	t.Setenv("AGENT_MAX_FILE_BYTES", "-1")
+	t.Setenv("AGENT_MAX_TOTAL_FILE_BYTES", "invalid")
 
 	cfg := Load()
 	want := defaultConfig()
@@ -134,20 +158,26 @@ func clearEnv(t *testing.T) {
 	t.Setenv("TRUSTED_TOOL_DIR", "")
 	t.Setenv("AGENT_MAX_STEPS", "")
 	t.Setenv("AGENT_TOTAL_TIMEOUT_MS", "")
+	t.Setenv("AGENT_MAX_FILES_PER_RUN", "")
+	t.Setenv("AGENT_MAX_FILE_BYTES", "")
+	t.Setenv("AGENT_MAX_TOTAL_FILE_BYTES", "")
 }
 
 func defaultConfig() Config {
 	return Config{
-		AppEnv:              DefaultAppEnv,
-		HTTPAddr:            DefaultHTTPAddr,
-		DatabaseDriver:      DefaultDatabaseDriver,
-		DatabaseURL:         DefaultDatabaseURL,
-		OpenAIAPIKey:        "",
-		OpenAIBaseURL:       DefaultOpenAIBaseURL,
-		OpenAIModel:         DefaultOpenAIModel,
-		TrustedToolDir:      DefaultTrustedToolDir,
-		AgentMaxSteps:       DefaultAgentMaxSteps,
-		AgentTotalTimeoutMS: DefaultAgentTotalTimeoutMS,
+		AppEnv:                 DefaultAppEnv,
+		HTTPAddr:               DefaultHTTPAddr,
+		DatabaseDriver:         DefaultDatabaseDriver,
+		DatabaseURL:            DefaultDatabaseURL,
+		OpenAIAPIKey:           "",
+		OpenAIBaseURL:          DefaultOpenAIBaseURL,
+		OpenAIModel:            DefaultOpenAIModel,
+		TrustedToolDir:         DefaultTrustedToolDir,
+		AgentMaxSteps:          DefaultAgentMaxSteps,
+		AgentTotalTimeoutMS:    DefaultAgentTotalTimeoutMS,
+		AgentMaxFilesPerRun:    DefaultAgentMaxFilesPerRun,
+		AgentMaxFileBytes:      DefaultAgentMaxFileBytes,
+		AgentMaxTotalFileBytes: DefaultAgentMaxTotalFileBytes,
 	}
 }
 

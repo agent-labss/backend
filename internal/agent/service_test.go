@@ -17,11 +17,13 @@ var (
 )
 
 type fakePlanner struct {
-	actions []PlannerAction
-	index   int
+	actions  []PlannerAction
+	requests []PlanRequest
+	index    int
 }
 
-func (planner *fakePlanner) NextAction(_ context.Context, _ PlanRequest) (PlannerAction, error) {
+func (planner *fakePlanner) NextAction(_ context.Context, request PlanRequest) (PlannerAction, error) {
+	planner.requests = append(planner.requests, request)
 	if planner.index >= len(planner.actions) {
 		return PlannerAction{}, errNoMoreActions
 	}
@@ -59,11 +61,13 @@ func (executor *fakeExecutor) Execute(_ context.Context, request ExecuteRequest)
 }
 
 type memoryRunStore struct {
-	steps []StepRecord
+	record CreateRunRecord
+	steps  []StepRecord
 }
 
-func (store *memoryRunStore) StartRun(_ context.Context, message string) (Run, error) {
-	return Run{ID: testRunID, Message: message, Status: RunStatusRunning, StartedAt: time.Now()}, nil
+func (store *memoryRunStore) StartRun(_ context.Context, record CreateRunRecord) (Run, error) {
+	store.record = record
+	return Run{ID: testRunID, Message: record.Message, Status: RunStatusRunning, StartedAt: time.Now()}, nil
 }
 
 func (store *memoryRunStore) FinishRun(_ context.Context, _ Run) error {
@@ -85,8 +89,8 @@ func newBlockingFinishRunStore() *blockingFinishRunStore {
 	return &blockingFinishRunStore{finishStarted: make(chan struct{})}
 }
 
-func (store *blockingFinishRunStore) StartRun(_ context.Context, message string) (Run, error) {
-	return Run{ID: testRunID, Message: message, Status: RunStatusRunning, StartedAt: time.Now()}, nil
+func (store *blockingFinishRunStore) StartRun(_ context.Context, record CreateRunRecord) (Run, error) {
+	return Run{ID: testRunID, Message: record.Message, Status: RunStatusRunning, StartedAt: time.Now()}, nil
 }
 
 func (store *blockingFinishRunStore) FinishRun(ctx context.Context, run Run) error {
@@ -254,6 +258,41 @@ func TestServiceRunAuditsUnknownToolAttempt(t *testing.T) {
 	}
 	if runStore.steps[0].Status != StepStatusFailed {
 		t.Fatalf("step status = %q, want failed", runStore.steps[0].Status)
+	}
+}
+
+func TestServiceRunPassesAttachmentsToPlanner(t *testing.T) {
+	planner := &fakePlanner{actions: []PlannerAction{{Type: ActionTypeFinalAnswer, Answer: "done"}}}
+	service := NewService(ServiceConfig{
+		Planner:      planner,
+		Catalog:      fakeCatalog{},
+		Executor:     &fakeExecutor{},
+		RunStore:     &memoryRunStore{},
+		MaxSteps:     8,
+		TotalTimeout: time.Minute,
+	})
+	attachments := []Attachment{{
+		ID:       "att_pdf",
+		Filename: "merchant_catalog.pdf",
+		MIMEType: "application/pdf",
+		Kind:     AttachmentKindPDF,
+		Size:     8,
+		Data:     "JVBERi0xLjc=",
+	}}
+
+	_, err := service.Run(context.Background(), CreateRunRequest{Message: "update catalog", Attachments: attachments})
+
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(planner.requests) != 1 {
+		t.Fatalf("len(planner.requests) = %d, want 1", len(planner.requests))
+	}
+	if len(planner.requests[0].Attachments) != 1 {
+		t.Fatalf("len(Attachments) = %d, want 1", len(planner.requests[0].Attachments))
+	}
+	if planner.requests[0].Attachments[0].Filename != "merchant_catalog.pdf" {
+		t.Fatalf("Filename = %q, want merchant_catalog.pdf", planner.requests[0].Attachments[0].Filename)
 	}
 }
 

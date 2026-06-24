@@ -70,6 +70,18 @@ type AgentRun struct {
 	FinishedAt    sql.NullTime
 }
 
+type AgentRunAttachment struct {
+	ID             string    `gorm:"primaryKey;type:text"`
+	RunID          string    `gorm:"not null;index"`
+	Filename       string    `gorm:"not null"`
+	MIMEType       string    `gorm:"not null"`
+	Kind           string    `gorm:"not null;index"`
+	SizeBytes      int64     `gorm:"not null"`
+	ProviderFileID string    `gorm:"not null;default:''"`
+	CreatedAt      time.Time `gorm:"not null"`
+	Run            AgentRun  `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+}
+
 type AgentRunStep struct {
 	ID            string    `gorm:"primaryKey;type:text"`
 	RunID         string    `gorm:"not null;index"`
@@ -89,6 +101,7 @@ func Models() []any {
 		&Tool{},
 		&AgentInstruction{},
 		&AgentRun{},
+		&AgentRunAttachment{},
 		&AgentRunStep{},
 	}
 }

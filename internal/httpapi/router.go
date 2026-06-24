@@ -9,7 +9,8 @@ import (
 )
 
 const (
-	StatusPath = "/api/status"
+	StatusPath      = "/api/status"
+	uploadBodyLimit = 10 * 1024 * 1024
 )
 
 type RouterConfig struct {
@@ -29,7 +30,7 @@ type AgentHandler interface {
 }
 
 func NewRouter(config RouterConfig) *fiber.App {
-	app := fiber.New()
+	app := fiber.New(fiber.Config{BodyLimit: uploadBodyLimit})
 	app.Use(withCORS)
 	app.Get(StatusPath, config.StatusHandler.Status)
 	if config.ToolHandler != nil {

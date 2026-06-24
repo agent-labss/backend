@@ -24,7 +24,7 @@ type Executor interface {
 }
 
 type RunStore interface {
-	StartRun(ctx context.Context, message string) (Run, error)
+	StartRun(ctx context.Context, record CreateRunRecord) (Run, error)
 	FinishRun(ctx context.Context, run Run) error
 	SaveStep(ctx context.Context, step StepRecord) error
 }
@@ -51,6 +51,7 @@ type Service struct {
 type runState struct {
 	run                 Run
 	message             string
+	attachments         []Attachment
 	instructions        toolcatalog.Instructions
 	tools               []toolcatalog.Tool
 	toolsByName         map[string]toolcatalog.Tool
@@ -76,7 +77,7 @@ func (service Service) Run(parent context.Context, request CreateRunRequest) (Ru
 	ctx, cancel := context.WithTimeout(parent, service.totalTimeout)
 	defer cancel()
 
-	run, err := service.runStore.StartRun(ctx, request.Message)
+	run, err := service.runStore.StartRun(ctx, CreateRunRecord(request))
 	if err != nil {
 		return RunResponse{}, fmt.Errorf("start run: %w", err)
 	}
@@ -125,6 +126,7 @@ func (service Service) newRunState(ctx context.Context, run Run, request CreateR
 	return &runState{
 		run:                 run,
 		message:             request.Message,
+		attachments:         request.Attachments,
 		instructions:        instructions,
 		tools:               tools,
 		toolsByName:         indexToolsByName(tools),
@@ -137,6 +139,7 @@ func (service Service) runStep(ctx context.Context, state *runState, stepOrder i
 	action, err := service.planner.NextAction(ctx, PlanRequest{
 		Instructions: state.instructions.Content,
 		Message:      state.message,
+		Attachments:  state.attachments,
 		Tools:        state.tools,
 		Observations: state.observations,
 	})

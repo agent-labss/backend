@@ -7,7 +7,10 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
-const errorField = "error"
+const (
+	errorField             = "error"
+	invalidJSONBodyMessage = "invalid JSON request body"
+)
 
 type Handler struct {
 	service Service
@@ -20,7 +23,7 @@ func NewHandler(service Service) Handler {
 func (handler Handler) RegisterTool(c fiber.Ctx) error {
 	var request RegisterToolRequest
 	if err := c.Bind().Body(&request); err != nil {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: "invalid JSON request body"})
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: invalidJSONBodyMessage})
 	}
 
 	tool, err := handler.service.RegisterTool(c.Context(), request)
@@ -43,7 +46,7 @@ func (handler Handler) ListTools(c fiber.Ctx) error {
 func (handler Handler) UpdateInstructions(c fiber.Ctx) error {
 	var request UpdateInstructionsRequest
 	if err := c.Bind().Body(&request); err != nil {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: "invalid JSON request body"})
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: invalidJSONBodyMessage})
 	}
 
 	instructions, err := handler.service.UpdateInstructions(c.Context(), request)

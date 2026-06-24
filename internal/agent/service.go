@@ -215,7 +215,7 @@ func (service Service) recordUnknownTool(ctx context.Context, state *runState, s
 		StepOrder:     stepOrder,
 		ToolID:        "",
 		InputSummary:  mustMarshalJSON(map[string]any{}),
-		OutputSummary: mustMarshalJSON(map[string]any{"error": observation.Error}),
+		OutputSummary: mustMarshalJSON(map[string]any{errorField: observation.Error}),
 		Status:        StepStatusFailed,
 		ErrorSummary:  observation.Error,
 	}

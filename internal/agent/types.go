@@ -5,12 +5,17 @@ import (
 	"time"
 )
 
-const AgentRunsPath = "/api/agent/runs"
+const (
+	AgentRunsPath     = "/api/agent/runs"
+	AgentRunPath      = AgentRunsPath + "/:run_id"
+	AgentRunTurnsPath = AgentRunsPath + "/:run_id/turns"
+)
 
 const (
-	RunStatusRunning   RunStatus = "running"
-	RunStatusSucceeded RunStatus = "succeeded"
-	RunStatusFailed    RunStatus = "failed"
+	RunStatusRunning        RunStatus = "running"
+	RunStatusWaitingForUser RunStatus = "waiting_for_user"
+	RunStatusSucceeded      RunStatus = "succeeded"
+	RunStatusFailed         RunStatus = "failed"
 )
 
 const (
@@ -25,6 +30,7 @@ const (
 
 const (
 	ActionTypeCallTool    ActionType = "call_tool"
+	ActionTypeAskUser     ActionType = "ask_user"
 	ActionTypeFinalAnswer ActionType = "final_answer"
 )
 
@@ -35,13 +41,29 @@ const (
 	AttachmentKindCSV         AttachmentKind = "csv"
 )
 
+const (
+	InteractionTypeUserInput InteractionType = "user_input"
+)
+
+const (
+	InteractionStatusPending   InteractionStatus = "pending"
+	InteractionStatusResponded InteractionStatus = "responded"
+)
+
 type RunStatus string
 type StepStatus string
 type ToolResultStatus string
 type ActionType string
 type AttachmentKind string
+type InteractionType string
+type InteractionStatus string
 
 type CreateRunRequest struct {
+	Message     string       `json:"message"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+}
+
+type CreateRunTurnRequest struct {
 	Message     string       `json:"message"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 }
@@ -73,12 +95,19 @@ type CreateRunRecord struct {
 	Attachments []Attachment
 }
 
+type CreateRunTurnRecord struct {
+	RunID       string
+	Message     string
+	Attachments []Attachment
+}
+
 type RunResponse struct {
-	RunID   string         `json:"run_id"`
-	Status  RunStatus      `json:"status"`
-	Answer  string         `json:"answer,omitempty"`
-	Outputs map[string]any `json:"outputs,omitempty"`
-	Error   string         `json:"error,omitempty"`
+	RunID       string         `json:"run_id"`
+	Status      RunStatus      `json:"status"`
+	Answer      string         `json:"answer,omitempty"`
+	Outputs     map[string]any `json:"outputs,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	Interaction *Interaction   `json:"interaction,omitempty"`
 }
 
 type Run struct {
@@ -90,6 +119,40 @@ type Run struct {
 	ErrorSummary string
 	StartedAt    time.Time
 	FinishedAt   time.Time
+}
+
+type Interaction struct {
+	ID          string            `json:"id"`
+	RunID       string            `json:"run_id,omitempty"`
+	Type        InteractionType   `json:"type"`
+	Status      InteractionStatus `json:"status,omitempty"`
+	Message     string            `json:"message"`
+	Payload     json.RawMessage   `json:"payload,omitempty"`
+	CreatedAt   time.Time         `json:"created_at,omitempty"`
+	RespondedAt time.Time         `json:"responded_at,omitempty"`
+}
+
+type RunTurn struct {
+	ID          string
+	RunID       string
+	Message     string
+	Attachments []Attachment
+	CreatedAt   time.Time
+}
+
+type ObservationRecord struct {
+	RunID       string
+	StepOrder   int
+	Observation Observation
+}
+
+type RunStateRecord struct {
+	Run          Run
+	Attachments  []Attachment
+	Interactions []Interaction
+	Pending      *Interaction
+	Turns        []RunTurn
+	Observations []Observation
 }
 
 type StepRecord struct {
@@ -111,6 +174,8 @@ type PlannerAction struct {
 	Inputs  json.RawMessage `json:"inputs,omitempty"`
 	Answer  string          `json:"answer,omitempty"`
 	Outputs map[string]any  `json:"outputs,omitempty"`
+	Message string          `json:"message,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 type Observation struct {

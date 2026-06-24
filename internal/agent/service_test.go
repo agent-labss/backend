@@ -61,16 +61,25 @@ func (executor *fakeExecutor) Execute(_ context.Context, request ExecuteRequest)
 }
 
 type memoryRunStore struct {
-	record CreateRunRecord
-	steps  []StepRecord
+	record       CreateRunRecord
+	run          Run
+	steps        []StepRecord
+	interactions []Interaction
+	turns        []RunTurn
+	observations []Observation
+	waitingRun   Run
+	finishedRun  Run
 }
 
 func (store *memoryRunStore) StartRun(_ context.Context, record CreateRunRecord) (Run, error) {
 	store.record = record
-	return Run{ID: testRunID, Message: record.Message, Status: RunStatusRunning, StartedAt: time.Now()}, nil
+	store.run = Run{ID: testRunID, Message: record.Message, Status: RunStatusRunning, StartedAt: time.Now()}
+	return store.run, nil
 }
 
-func (store *memoryRunStore) FinishRun(_ context.Context, _ Run) error {
+func (store *memoryRunStore) FinishRun(_ context.Context, run Run) error {
+	store.finishedRun = run
+	store.run = run
 	return nil
 }
 
@@ -79,18 +88,123 @@ func (store *memoryRunStore) SaveStep(_ context.Context, step StepRecord) error 
 	return nil
 }
 
+func (store *memoryRunStore) GetRun(_ context.Context, runID string) (RunResponse, error) {
+	if store.run.ID != runID {
+		return RunResponse{}, ErrRunNotFound
+	}
+	return RunResponse{RunID: store.run.ID, Status: store.run.Status, Answer: store.run.Answer, Outputs: store.run.Outputs, Error: store.run.ErrorSummary, Interaction: store.pendingInteraction()}, nil
+}
+
+func (store *memoryRunStore) GetRunState(_ context.Context, runID string) (RunStateRecord, error) {
+	if store.run.ID != runID {
+		return RunStateRecord{}, ErrRunNotFound
+	}
+	return RunStateRecord{
+		Run:          store.run,
+		Attachments:  store.record.Attachments,
+		Interactions: append([]Interaction{}, store.interactions...),
+		Pending:      store.pendingInteraction(),
+		Turns:        append([]RunTurn{}, store.turns...),
+		Observations: append([]Observation{}, store.observations...),
+	}, nil
+}
+
+func (store *memoryRunStore) CreateInteraction(_ context.Context, interaction Interaction) (Interaction, error) {
+	if interaction.ID == "" {
+		interaction.ID = "int_test"
+	}
+	if interaction.Type == "" {
+		interaction.Type = InteractionTypeUserInput
+	}
+	if interaction.Status == "" {
+		interaction.Status = InteractionStatusPending
+	}
+	store.interactions = append(store.interactions, interaction)
+	return interaction, nil
+}
+
+func (store *memoryRunStore) MarkRunWaiting(_ context.Context, run Run, _ Interaction) error {
+	run.Status = RunStatusWaitingForUser
+	store.run = run
+	store.waitingRun = run
+	return nil
+}
+
+func (store *memoryRunStore) CreateRunTurn(_ context.Context, record CreateRunTurnRecord) (RunTurn, error) {
+	turn := RunTurn{ID: "turn_test", RunID: record.RunID, Message: record.Message, Attachments: record.Attachments, CreatedAt: time.Now()}
+	store.turns = append(store.turns, turn)
+	return turn, nil
+}
+
+func (store *memoryRunStore) MarkInteractionResponded(_ context.Context, interactionID string, _ string) error {
+	for index := range store.interactions {
+		if store.interactions[index].ID == interactionID {
+			store.interactions[index].Status = InteractionStatusResponded
+			store.interactions[index].RespondedAt = time.Now()
+		}
+	}
+	return nil
+}
+
+func (store *memoryRunStore) SaveObservation(_ context.Context, record ObservationRecord) error {
+	store.observations = append(store.observations, record.Observation)
+	return nil
+}
+
+func (store *memoryRunStore) pendingInteraction() *Interaction {
+	for index := range store.interactions {
+		if store.interactions[index].Status == InteractionStatusPending {
+			interaction := store.interactions[index]
+			return &interaction
+		}
+	}
+	return nil
+}
+
+func runStores(store *memoryRunStore) RunStore {
+	return RunStore{
+		startRun:                 store.StartRun,
+		getRun:                   store.GetRun,
+		getRunState:              store.GetRunState,
+		finishRun:                store.FinishRun,
+		saveStep:                 store.SaveStep,
+		createInteraction:        store.CreateInteraction,
+		markRunWaiting:           store.MarkRunWaiting,
+		createRunTurn:            store.CreateRunTurn,
+		markInteractionResponded: store.MarkInteractionResponded,
+		saveObservation:          store.SaveObservation,
+	}
+}
+
 type blockingFinishRunStore struct {
 	finishStarted chan struct{}
 	finishContext context.Context
 	finishedRun   Run
+	memoryRunStore
 }
 
 func newBlockingFinishRunStore() *blockingFinishRunStore {
 	return &blockingFinishRunStore{finishStarted: make(chan struct{})}
 }
 
+func blockingRunStores(store *blockingFinishRunStore) RunStore {
+	return RunStore{
+		startRun:                 store.StartRun,
+		getRun:                   store.GetRun,
+		getRunState:              store.GetRunState,
+		finishRun:                store.FinishRun,
+		saveStep:                 store.SaveStep,
+		createInteraction:        store.CreateInteraction,
+		markRunWaiting:           store.MarkRunWaiting,
+		createRunTurn:            store.CreateRunTurn,
+		markInteractionResponded: store.MarkInteractionResponded,
+		saveObservation:          store.SaveObservation,
+	}
+}
+
 func (store *blockingFinishRunStore) StartRun(_ context.Context, record CreateRunRecord) (Run, error) {
-	return Run{ID: testRunID, Message: record.Message, Status: RunStatusRunning, StartedAt: time.Now()}, nil
+	store.run = Run{ID: testRunID, Message: record.Message, Status: RunStatusRunning, StartedAt: time.Now()}
+	return store.run, nil
 }
 
 func (store *blockingFinishRunStore) FinishRun(ctx context.Context, run Run) error {
@@ -121,7 +235,7 @@ func TestServiceRunExecutesToolThenFinalAnswer(t *testing.T) {
 		Planner:      planner,
 		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "export_report", TimeoutMS: 1000}}, instructions: toolcatalog.Instructions{Content: "Use tools."}},
 		Executor:     executor,
-		RunStore:     runStore,
+		RunStore:     runStores(runStore),
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
 	})
@@ -154,7 +268,7 @@ func TestServiceRunFailsOnUnknownToolAfterRetry(t *testing.T) {
 		Planner:      planner,
 		Catalog:      fakeCatalog{},
 		Executor:     &fakeExecutor{},
-		RunStore:     &memoryRunStore{},
+		RunStore:     runStores(&memoryRunStore{}),
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
 	})
@@ -196,7 +310,7 @@ func newServiceWithFailedRunFinishTimeout(runStore *blockingFinishRunStore, time
 		Planner:      &fakePlanner{},
 		Catalog:      fakeCatalog{},
 		Executor:     &fakeExecutor{},
-		RunStore:     runStore,
+		RunStore:     blockingRunStores(runStore),
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
 	})
@@ -243,7 +357,7 @@ func TestServiceRunAuditsUnknownToolAttempt(t *testing.T) {
 		Planner:      planner,
 		Catalog:      fakeCatalog{},
 		Executor:     &fakeExecutor{},
-		RunStore:     runStore,
+		RunStore:     runStores(runStore),
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
 	})
@@ -267,7 +381,7 @@ func TestServiceRunPassesAttachmentsToPlanner(t *testing.T) {
 		Planner:      planner,
 		Catalog:      fakeCatalog{},
 		Executor:     &fakeExecutor{},
-		RunStore:     &memoryRunStore{},
+		RunStore:     runStores(&memoryRunStore{}),
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
 	})
@@ -296,6 +410,128 @@ func TestServiceRunPassesAttachmentsToPlanner(t *testing.T) {
 	}
 }
 
+func TestServiceRunWaitsForUserOnAskUser(t *testing.T) {
+	runStore := &memoryRunStore{}
+	planner := &fakePlanner{actions: []PlannerAction{{
+		Type:    ActionTypeAskUser,
+		Message: "Which account should I use?",
+		Payload: json.RawMessage(`{"kind":"choice"}`),
+	}}}
+	service := newTestService(planner, runStore)
+
+	response, err := service.Run(context.Background(), CreateRunRequest{Message: "delete duplicate"})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if response.Status != RunStatusWaitingForUser {
+		t.Fatalf("Status = %q, want waiting_for_user", response.Status)
+	}
+	if response.Interaction == nil || response.Interaction.Message != "Which account should I use?" {
+		t.Fatalf("Interaction = %#v, want planner interaction", response.Interaction)
+	}
+	if runStore.waitingRun.Status != RunStatusWaitingForUser {
+		t.Fatalf("waitingRun.Status = %q, want waiting_for_user", runStore.waitingRun.Status)
+	}
+}
+
+func TestServiceCreateRunTurnContinuesSameRunWithAttachments(t *testing.T) {
+	runStore := newWaitingMemoryRunStore()
+	planner := &fakePlanner{actions: []PlannerAction{{Type: ActionTypeFinalAnswer, Answer: "continued"}}}
+	service := newTestService(planner, runStore)
+	attachments := []Attachment{{
+		ID:       "att_turn",
+		Filename: "accounts.csv",
+		MIMEType: "text/csv",
+		Kind:     AttachmentKindCSV,
+		Size:     7,
+		Data:     "YSxiCg==",
+	}}
+
+	response, err := service.CreateRunTurn(context.Background(), testRunID, CreateRunTurnRequest{Message: "use this file", Attachments: attachments})
+	if err != nil {
+		t.Fatalf("CreateRunTurn() error = %v", err)
+	}
+	if response.RunID != testRunID || response.Status != RunStatusSucceeded {
+		t.Fatalf("response = %#v, want same run succeeded", response)
+	}
+	requirePlannerSawRunTurn(t, planner)
+}
+
+func TestServiceCreateRunTurnContinuesWithPriorObservationsAndStepOrder(t *testing.T) {
+	runStore := newWaitingMemoryRunStore()
+	runStore.observations = []Observation{{
+		StepOrder: 1,
+		ToolName:  "lookup_account",
+		Status:    StepStatusSucceeded,
+		Outputs:   map[string]any{"account_id": "acct_123"},
+	}}
+	planner := &fakePlanner{actions: []PlannerAction{
+		{Type: ActionTypeCallTool, Tool: "export_report", Inputs: json.RawMessage(`{}`)},
+		{Type: ActionTypeFinalAnswer, Answer: "continued"},
+	}}
+	executor := &fakeExecutor{observations: []Observation{{Status: StepStatusSucceeded}}}
+	service := NewService(ServiceConfig{
+		Planner:      planner,
+		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "export_report", TimeoutMS: 1000}}},
+		Executor:     executor,
+		RunStore:     runStores(runStore),
+		MaxSteps:     8,
+		TotalTimeout: time.Minute,
+	})
+
+	response, err := service.CreateRunTurn(context.Background(), testRunID, CreateRunTurnRequest{Message: "ok"})
+	if err != nil {
+		t.Fatalf("CreateRunTurn() error = %v", err)
+	}
+	if response.Status != RunStatusSucceeded {
+		t.Fatalf("Status = %q, want succeeded", response.Status)
+	}
+	if len(planner.requests) == 0 || len(planner.requests[0].Observations) != 1 {
+		t.Fatalf("planner observations = %#v, want prior observation", planner.requests)
+	}
+	if len(runStore.steps) != 1 || runStore.steps[0].StepOrder != 2 {
+		t.Fatalf("saved steps = %#v, want resumed step order 2", runStore.steps)
+	}
+}
+
+func requirePlannerSawRunTurn(t *testing.T, planner *fakePlanner) {
+	t.Helper()
+
+	if len(planner.requests) != 1 || planner.requests[0].Message != "use this file" {
+		t.Fatalf("planner requests = %#v, want user turn message", planner.requests)
+	}
+	if planner.requests[0].Interaction == nil || planner.requests[0].Interaction.Message != "Which account should I use?" {
+		t.Fatalf("planner interaction = %#v, want pending interaction context", planner.requests[0].Interaction)
+	}
+	if len(planner.requests[0].Attachments) != 1 {
+		t.Fatalf("planner attachments = %d, want 1", len(planner.requests[0].Attachments))
+	}
+}
+
+func newTestService(planner Planner, runStore *memoryRunStore) Service {
+	return NewService(ServiceConfig{
+		Planner:      planner,
+		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "export_report", TimeoutMS: 1000}}},
+		Executor:     &fakeExecutor{},
+		RunStore:     runStores(runStore),
+		MaxSteps:     8,
+		TotalTimeout: time.Minute,
+	})
+}
+
+func newWaitingMemoryRunStore() *memoryRunStore {
+	return &memoryRunStore{
+		run: Run{ID: testRunID, Message: "delete duplicate", Status: RunStatusWaitingForUser, StartedAt: time.Now()},
+		interactions: []Interaction{{
+			ID:      "int_test",
+			RunID:   testRunID,
+			Type:    InteractionTypeUserInput,
+			Status:  InteractionStatusPending,
+			Message: "Which account should I use?",
+		}},
+	}
+}
+
 func TestServiceRunFailsAtStepLimit(t *testing.T) {
 	planner := &fakePlanner{actions: []PlannerAction{
 		{Type: ActionTypeCallTool, Tool: "export_report", Inputs: json.RawMessage(`{}`)},
@@ -309,7 +545,7 @@ func TestServiceRunFailsAtStepLimit(t *testing.T) {
 		Planner:      planner,
 		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "export_report", TimeoutMS: 1000}}},
 		Executor:     executor,
-		RunStore:     &memoryRunStore{},
+		RunStore:     runStores(&memoryRunStore{}),
 		MaxSteps:     1,
 		TotalTimeout: time.Minute,
 	})
@@ -335,7 +571,7 @@ func TestServiceRunAllowsOneBusinessErrorFollowUp(t *testing.T) {
 		Planner:      planner,
 		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "find_partner", TimeoutMS: 1000}}},
 		Executor:     executor,
-		RunStore:     runStore,
+		RunStore:     runStores(runStore),
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
 	})
@@ -366,7 +602,7 @@ func TestServiceRunFailsRepeatedBusinessError(t *testing.T) {
 		Planner:      planner,
 		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "find_partner", TimeoutMS: 1000}}},
 		Executor:     executor,
-		RunStore:     &memoryRunStore{},
+		RunStore:     runStores(&memoryRunStore{}),
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
 	})

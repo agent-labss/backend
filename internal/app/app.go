@@ -87,7 +87,7 @@ func newAgentHandler(cfg config.Config, repository agent.Repository, catalog age
 		Planner:      planner,
 		Catalog:      catalog,
 		Executor:     executor,
-		RunStore:     repository,
+		RunStore:     agent.NewRunStore(repository),
 		MaxSteps:     cfg.AgentMaxSteps,
 		TotalTimeout: time.Duration(cfg.AgentTotalTimeoutMS) * time.Millisecond,
 	})

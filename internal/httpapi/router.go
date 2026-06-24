@@ -27,6 +27,8 @@ type ToolHandler interface {
 
 type AgentHandler interface {
 	CreateRun(c fiber.Ctx) error
+	GetRun(c fiber.Ctx) error
+	CreateRunTurn(c fiber.Ctx) error
 }
 
 func NewRouter(config RouterConfig) *fiber.App {
@@ -40,6 +42,8 @@ func NewRouter(config RouterConfig) *fiber.App {
 	}
 	if config.AgentHandler != nil {
 		app.Post(agent.AgentRunsPath, config.AgentHandler.CreateRun)
+		app.Get(agent.AgentRunPath, config.AgentHandler.GetRun)
+		app.Post(agent.AgentRunTurnsPath, config.AgentHandler.CreateRunTurn)
 	}
 	return app
 }

@@ -39,6 +39,14 @@ func (handler fakeAgentHandler) CreateRun(c fiber.Ctx) error {
 	return c.SendStatus(http.StatusOK)
 }
 
+func (handler fakeAgentHandler) GetRun(c fiber.Ctx) error {
+	return c.SendStatus(http.StatusOK)
+}
+
+func (handler fakeAgentHandler) CreateRunTurn(c fiber.Ctx) error {
+	return c.SendStatus(http.StatusOK)
+}
+
 func TestOptionsRequestReturnsCORSHeaders(t *testing.T) {
 	app := NewRouter(RouterConfig{
 		StatusHandler: status.NewHandler(status.NewService(), "test"),
@@ -77,6 +85,14 @@ func TestToolRoutesAreRegistered(t *testing.T) {
 
 func TestAgentRunRouteIsRegistered(t *testing.T) {
 	assertRouteStatus(t, http.MethodPost, agent.AgentRunsPath, http.StatusOK)
+}
+
+func TestAgentRunGetRouteIsRegistered(t *testing.T) {
+	assertRouteStatus(t, http.MethodGet, agent.AgentRunsPath+"/run_test", http.StatusOK)
+}
+
+func TestAgentRunTurnRouteIsRegistered(t *testing.T) {
+	assertRouteStatus(t, http.MethodPost, agent.AgentRunsPath+"/run_test/turns", http.StatusOK)
 }
 
 func TestNewRouterUsesUploadBodyLimit(t *testing.T) {

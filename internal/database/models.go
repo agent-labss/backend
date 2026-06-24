@@ -82,6 +82,50 @@ type AgentRunAttachment struct {
 	Run            AgentRun  `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
 }
 
+type AgentRunInteraction struct {
+	ID             string    `gorm:"primaryKey;type:text"`
+	RunID          string    `gorm:"not null;index"`
+	Type           string    `gorm:"not null;index"`
+	Status         string    `gorm:"not null;index"`
+	Message        string    `gorm:"not null"`
+	Payload        JSON      `gorm:"type:json;not null;default:'{}'"`
+	ResponseTurnID string    `gorm:"not null;default:''"`
+	CreatedAt      time.Time `gorm:"not null"`
+	RespondedAt    sql.NullTime
+	Run            AgentRun `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+}
+
+type AgentRunTurn struct {
+	ID        string    `gorm:"primaryKey;type:text"`
+	RunID     string    `gorm:"not null;index"`
+	Message   string    `gorm:"not null"`
+	CreatedAt time.Time `gorm:"not null"`
+	Run       AgentRun  `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+}
+
+type AgentRunTurnAttachment struct {
+	ID             string       `gorm:"primaryKey;type:text"`
+	TurnID         string       `gorm:"not null;index"`
+	RunID          string       `gorm:"not null;index"`
+	Filename       string       `gorm:"not null"`
+	MIMEType       string       `gorm:"not null"`
+	Kind           string       `gorm:"not null;index"`
+	SizeBytes      int64        `gorm:"not null"`
+	ProviderFileID string       `gorm:"not null;default:''"`
+	CreatedAt      time.Time    `gorm:"not null"`
+	Turn           AgentRunTurn `gorm:"foreignKey:TurnID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+	Run            AgentRun     `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+}
+
+type AgentRunObservation struct {
+	ID        string    `gorm:"primaryKey;type:text"`
+	RunID     string    `gorm:"not null;index"`
+	StepOrder int       `gorm:"not null"`
+	Payload   JSON      `gorm:"type:json;not null"`
+	CreatedAt time.Time `gorm:"not null"`
+	Run       AgentRun  `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+}
+
 type AgentRunStep struct {
 	ID            string    `gorm:"primaryKey;type:text"`
 	RunID         string    `gorm:"not null;index"`
@@ -102,6 +146,10 @@ func Models() []any {
 		&AgentInstruction{},
 		&AgentRun{},
 		&AgentRunAttachment{},
+		&AgentRunInteraction{},
+		&AgentRunTurn{},
+		&AgentRunTurnAttachment{},
+		&AgentRunObservation{},
 		&AgentRunStep{},
 	}
 }

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -144,6 +145,108 @@ func TestRepositoryRollsBackRunWhenAttachmentPersistenceFails(t *testing.T) {
 	}
 	if attachmentCount != 0 {
 		t.Fatalf("attachment count = %d, want 0", attachmentCount)
+	}
+}
+
+func TestRepositoryPersistsWaitingInteractionAndRunStatus(t *testing.T) {
+	repository := NewRepository(newTestDatabase(t))
+	run, err := repository.StartRun(context.Background(), CreateRunRecord{Message: "delete duplicate account"})
+	if err != nil {
+		t.Fatalf("StartRun() error = %v", err)
+	}
+	interaction := Interaction{
+		RunID:   run.ID,
+		Type:    InteractionTypeUserInput,
+		Status:  InteractionStatusPending,
+		Message: "Delete the duplicate account?",
+		Payload: json.RawMessage(`{"risk":"destructive"}`),
+	}
+
+	saved, err := repository.CreateInteraction(context.Background(), interaction)
+	if err != nil {
+		t.Fatalf("CreateInteraction() error = %v", err)
+	}
+	run.Status = RunStatusWaitingForUser
+	if err := repository.MarkRunWaiting(context.Background(), run, saved); err != nil {
+		t.Fatalf("MarkRunWaiting() error = %v", err)
+	}
+
+	loaded, err := repository.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun() error = %v", err)
+	}
+	if loaded.Status != RunStatusWaitingForUser {
+		t.Fatalf("Status = %q, want waiting_for_user", loaded.Status)
+	}
+	if loaded.Interaction == nil || loaded.Interaction.Message != "Delete the duplicate account?" {
+		t.Fatalf("Interaction = %#v, want pending interaction", loaded.Interaction)
+	}
+}
+
+func TestRepositoryPersistsUserTurnAttachmentsAndRespondsInteraction(t *testing.T) {
+	repository := NewRepository(newTestDatabase(t))
+	run, interaction := createWaitingRunForRepositoryTest(t, repository)
+
+	turn, err := repository.CreateRunTurn(context.Background(), CreateRunTurnRecord{
+		RunID:   run.ID,
+		Message: "Use this file.",
+		Attachments: []Attachment{{
+			ID:       "att_turn",
+			Filename: "accounts.csv",
+			MIMEType: "text/csv",
+			Kind:     AttachmentKindCSV,
+			Size:     7,
+			Data:     "ignored",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateRunTurn() error = %v", err)
+	}
+	if err := repository.MarkInteractionResponded(context.Background(), interaction.ID, turn.ID); err != nil {
+		t.Fatalf("MarkInteractionResponded() error = %v", err)
+	}
+
+	loaded, err := repository.GetRunState(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRunState() error = %v", err)
+	}
+	requireRepositoryTurnState(t, loaded)
+}
+
+func createWaitingRunForRepositoryTest(t *testing.T, repository Repository) (Run, Interaction) {
+	t.Helper()
+
+	run, err := repository.StartRun(context.Background(), CreateRunRecord{Message: "update catalog"})
+	if err != nil {
+		t.Fatalf("StartRun() error = %v", err)
+	}
+	interaction, err := repository.CreateInteraction(context.Background(), Interaction{
+		RunID:   run.ID,
+		Type:    InteractionTypeUserInput,
+		Status:  InteractionStatusPending,
+		Message: "Upload the catalog file.",
+	})
+	if err != nil {
+		t.Fatalf("CreateInteraction() error = %v", err)
+	}
+	if err := repository.MarkRunWaiting(context.Background(), run, interaction); err != nil {
+		t.Fatalf("MarkRunWaiting() error = %v", err)
+	}
+
+	return run, interaction
+}
+
+func requireRepositoryTurnState(t *testing.T, loaded RunStateRecord) {
+	t.Helper()
+
+	if len(loaded.Turns) != 1 || loaded.Turns[0].Message != "Use this file." {
+		t.Fatalf("Turns = %#v, want saved turn", loaded.Turns)
+	}
+	if len(loaded.Turns[0].Attachments) != 1 || loaded.Turns[0].Attachments[0].Filename != "accounts.csv" {
+		t.Fatalf("Turn attachments = %#v, want accounts.csv", loaded.Turns[0].Attachments)
+	}
+	if loaded.Pending != nil {
+		t.Fatalf("Pending = %#v, want nil after response", loaded.Pending)
 	}
 }
 

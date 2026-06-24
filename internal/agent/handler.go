@@ -22,6 +22,8 @@ var (
 
 type Runner interface {
 	Run(ctx context.Context, request CreateRunRequest) (RunResponse, error)
+	GetRun(ctx context.Context, runID string) (RunResponse, error)
+	CreateRunTurn(ctx context.Context, runID string, request CreateRunTurnRequest) (RunResponse, error)
 }
 
 type Handler struct {
@@ -39,38 +41,71 @@ func NewHandler(runner Runner, uploadConfigs ...UploadConfig) Handler {
 }
 
 func (handler Handler) CreateRun(c fiber.Ctx) error {
-	request, err := handler.createRunRequest(c)
+	input, err := handler.userInputRequest(c)
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: err.Error()})
 	}
-	if strings.TrimSpace(request.Message) == "" {
+	if strings.TrimSpace(input.Message) == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: "message is required"})
 	}
 
+	request := CreateRunRequest(input)
 	response, err := handler.runner.Run(c.Context(), request)
 	if err != nil {
-		return writeRunError(c, response)
+		return writeRunError(c, response, err)
 	}
 
 	return c.Status(http.StatusOK).JSON(response)
 }
 
-func (handler Handler) createRunRequest(c fiber.Ctx) (CreateRunRequest, error) {
-	contentType, err := mediaType(c.Get("Content-Type"))
+func (handler Handler) GetRun(c fiber.Ctx) error {
+	response, err := handler.runner.GetRun(c.Context(), c.Params("run_id"))
 	if err != nil {
-		return CreateRunRequest{}, err
-	}
-	if contentType == "multipart/form-data" {
-		return handler.multipartCreateRunRequest(c)
+		return writeRunError(c, response, err)
 	}
 
-	var request CreateRunRequest
+	return c.Status(http.StatusOK).JSON(response)
+}
+
+func (handler Handler) CreateRunTurn(c fiber.Ctx) error {
+	input, err := handler.userInputRequest(c)
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: err.Error()})
+	}
+	if strings.TrimSpace(input.Message) == "" && len(input.Attachments) == 0 {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: "message or attachment is required"})
+	}
+
+	request := CreateRunTurnRequest(input)
+	response, err := handler.runner.CreateRunTurn(c.Context(), c.Params("run_id"), request)
+	if err != nil {
+		return writeRunError(c, response, err)
+	}
+
+	return c.Status(http.StatusOK).JSON(response)
+}
+
+type userInputRequest struct {
+	Message     string       `json:"message"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+}
+
+func (handler Handler) userInputRequest(c fiber.Ctx) (userInputRequest, error) {
+	contentType, err := mediaType(c.Get("Content-Type"))
+	if err != nil {
+		return userInputRequest{}, err
+	}
+	if contentType == "multipart/form-data" {
+		return handler.multipartUserInputRequest(c)
+	}
+
+	var request userInputRequest
 	if err := c.Bind().Body(&request); err != nil {
-		return CreateRunRequest{}, errInvalidJSONRequestBody
+		return userInputRequest{}, errInvalidJSONRequestBody
 	}
 	attachments, err := normalizeJSONAttachments(request.Attachments, handler.uploadConfig)
 	if err != nil {
-		return CreateRunRequest{}, err
+		return userInputRequest{}, err
 	}
 	request.Attachments = attachments
 	return request, nil
@@ -87,22 +122,22 @@ func mediaType(contentType string) (string, error) {
 	return parsed, nil
 }
 
-func (handler Handler) multipartCreateRunRequest(c fiber.Ctx) (CreateRunRequest, error) {
+func (handler Handler) multipartUserInputRequest(c fiber.Ctx) (userInputRequest, error) {
 	form, err := c.MultipartForm()
 	if err != nil {
-		return CreateRunRequest{}, errInvalidMultipartRequestBody
+		return userInputRequest{}, errInvalidMultipartRequestBody
 	}
 
 	files, err := uploadedFilesFromForm(form)
 	if err != nil {
-		return CreateRunRequest{}, err
+		return userInputRequest{}, err
 	}
 	attachments, err := buildAttachments(files, handler.uploadConfig)
 	if err != nil {
-		return CreateRunRequest{}, err
+		return userInputRequest{}, err
 	}
 
-	return CreateRunRequest{Message: c.FormValue("message"), Attachments: attachments}, nil
+	return userInputRequest{Message: c.FormValue("message"), Attachments: attachments}, nil
 }
 
 func uploadedFilesFromForm(form *multipart.Form) ([]UploadedFile, error) {
@@ -132,7 +167,13 @@ func uploadedFilesFromForm(form *multipart.Form) ([]UploadedFile, error) {
 	return files, nil
 }
 
-func writeRunError(c fiber.Ctx, response RunResponse) error {
+func writeRunError(c fiber.Ctx, response RunResponse, err error) error {
+	if errors.Is(err, ErrRunNotFound) {
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{errorField: ErrRunNotFound.Error()})
+	}
+	if errors.Is(err, ErrRunNotWaiting) {
+		return c.Status(http.StatusConflict).JSON(fiber.Map{errorField: ErrRunNotWaiting.Error()})
+	}
 	if response.Status == RunStatusFailed {
 		return c.Status(http.StatusBadRequest).JSON(response)
 	}

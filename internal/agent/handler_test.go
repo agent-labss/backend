@@ -14,15 +14,29 @@ import (
 )
 
 type fakeRunService struct {
-	response RunResponse
-	err      error
-	called   bool
-	request  CreateRunRequest
+	response    RunResponse
+	err         error
+	called      bool
+	request     CreateRunRequest
+	getRunID    string
+	turnRunID   string
+	turnRequest CreateRunTurnRequest
 }
 
 func (service *fakeRunService) Run(_ context.Context, request CreateRunRequest) (RunResponse, error) {
 	service.called = true
 	service.request = request
+	return service.response, service.err
+}
+
+func (service *fakeRunService) GetRun(_ context.Context, runID string) (RunResponse, error) {
+	service.getRunID = runID
+	return service.response, service.err
+}
+
+func (service *fakeRunService) CreateRunTurn(_ context.Context, runID string, request CreateRunTurnRequest) (RunResponse, error) {
+	service.turnRunID = runID
+	service.turnRequest = request
 	return service.response, service.err
 }
 
@@ -73,6 +87,97 @@ func TestHandlerCreateRunAcceptsMultipartFiles(t *testing.T) {
 		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 	requireMultipartPDFRequest(t, service.request)
+}
+
+func TestHandlerGetRunReturnsResponse(t *testing.T) {
+	service := &fakeRunService{response: RunResponse{RunID: testRunID, Status: RunStatusWaitingForUser, Interaction: &Interaction{ID: "int_test", Type: InteractionTypeUserInput, Message: "Need input"}}}
+	handler := NewHandler(service)
+	app := fiber.New()
+	app.Get(AgentRunPath, handler.GetRun)
+
+	req, err := http.NewRequest(http.MethodGet, AgentRunsPath+"/"+testRunID, nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Test() error = %v", err)
+	}
+	defer closeAgentResponseBody(t, resp)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.getRunID != testRunID {
+		t.Fatalf("getRunID = %q, want %s", service.getRunID, testRunID)
+	}
+}
+
+func TestHandlerCreateRunTurnAcceptsJSON(t *testing.T) {
+	service := &fakeRunService{response: RunResponse{RunID: testRunID, Status: RunStatusSucceeded, Answer: "continued"}}
+	handler := NewHandler(service)
+	app := fiber.New()
+	app.Post(AgentRunTurnsPath, handler.CreateRunTurn)
+
+	req, err := http.NewRequest(http.MethodPost, AgentRunsPath+"/"+testRunID+"/turns", bytes.NewReader([]byte(`{"message":"ok"}`)))
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Test() error = %v", err)
+	}
+	defer closeAgentResponseBody(t, resp)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.turnRunID != testRunID || service.turnRequest.Message != "ok" {
+		t.Fatalf("turn = %s %#v, want same run ok", service.turnRunID, service.turnRequest)
+	}
+}
+
+func TestHandlerCreateRunTurnAcceptsMultipartFiles(t *testing.T) {
+	service := &fakeRunService{response: RunResponse{RunID: testRunID, Status: RunStatusSucceeded, Answer: "continued"}}
+	resp := performMultipartCreateRunTurn(t, service, testRunID, "用这个文件继续", "accounts.csv", "text/csv", []byte("a,b\n"))
+	defer closeAgentResponseBody(t, resp)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if service.turnRunID != testRunID || service.turnRequest.Message != "用这个文件继续" {
+		t.Fatalf("turn = %s %#v, want same run message", service.turnRunID, service.turnRequest)
+	}
+	if len(service.turnRequest.Attachments) != 1 || service.turnRequest.Attachments[0].Kind != AttachmentKindCSV {
+		t.Fatalf("attachments = %#v, want csv attachment", service.turnRequest.Attachments)
+	}
+}
+
+func TestHandlerCreateRunTurnAllowsAttachmentWithoutMessage(t *testing.T) {
+	service := &fakeRunService{response: RunResponse{RunID: testRunID, Status: RunStatusSucceeded, Answer: "continued"}}
+	resp := performMultipartCreateRunTurn(t, service, testRunID, "", "accounts.csv", "text/csv", []byte("a,b\n"))
+	defer closeAgentResponseBody(t, resp)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if len(service.turnRequest.Attachments) != 1 {
+		t.Fatalf("len(Attachments) = %d, want 1", len(service.turnRequest.Attachments))
+	}
+}
+
+func TestHandlerCreateRunTurnRejectsBlankMessageWithoutAttachments(t *testing.T) {
+	service := &fakeRunService{}
+	resp := testCreateRunTurnRequest(t, service, testRunID, []byte(`{"message":"   "}`))
+	defer closeAgentResponseBody(t, resp)
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if service.turnRunID != "" {
+		t.Fatal("CreateRunTurn() called for blank message without attachments, want no call")
+	}
 }
 
 func requireMultipartPDFRequest(t *testing.T, request CreateRunRequest) {
@@ -209,6 +314,28 @@ func performMultipartCreateRun(t *testing.T, service *fakeRunService, message st
 	return resp
 }
 
+func performMultipartCreateRunTurn(t *testing.T, service *fakeRunService, runID string, message string, filename string, mimeType string, data []byte) *http.Response {
+	t.Helper()
+
+	handler := NewHandler(service, UploadConfig{MaxFiles: 2, MaxFileBytes: 1024, MaxTotalBytes: 2048})
+	app := fiber.New()
+	app.Post(AgentRunTurnsPath, handler.CreateRunTurn)
+
+	body, contentType := multipartRunBody(t, message, filename, mimeType, data)
+	req, err := http.NewRequest(http.MethodPost, AgentRunsPath+"/"+runID+"/turns", body)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	req.Header.Set("Content-Type", contentType)
+
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Test() error = %v", err)
+	}
+
+	return resp
+}
+
 func TestHandlerCreateRunRejectsBadJSON(t *testing.T) {
 	service := &fakeRunService{}
 	resp := testCreateRunRequest(t, service, []byte(`{`))
@@ -249,6 +376,27 @@ func testCreateRunRequestWithUploadConfig(t *testing.T, service *fakeRunService,
 	app.Post(AgentRunsPath, handler.CreateRun)
 
 	req, err := http.NewRequest(http.MethodPost, AgentRunsPath, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Test() error = %v", err)
+	}
+
+	return resp
+}
+
+func testCreateRunTurnRequest(t *testing.T, service *fakeRunService, runID string, body []byte) *http.Response {
+	t.Helper()
+
+	handler := NewHandler(service)
+	app := fiber.New()
+	app.Post(AgentRunTurnsPath, handler.CreateRunTurn)
+
+	req, err := http.NewRequest(http.MethodPost, AgentRunsPath+"/"+runID+"/turns", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}

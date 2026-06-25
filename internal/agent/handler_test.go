@@ -16,7 +16,7 @@ import (
 type fakeChatService struct {
 	chat        ChatSession
 	messages    []ChatMessage
-	chatMessage ChatMessageResponse
+	chatMessage SubmitChatMessageResponse
 	err         error
 	called      bool
 	chatRequest CreateChatMessageRequest
@@ -39,7 +39,7 @@ func (service *fakeChatService) ListChatMessages(_ context.Context, chatID strin
 	return service.messages, service.err
 }
 
-func (service *fakeChatService) CreateChatMessage(_ context.Context, chatID string, request CreateChatMessageRequest) (ChatMessageResponse, error) {
+func (service *fakeChatService) CreateChatMessage(_ context.Context, chatID string, request CreateChatMessageRequest) (SubmitChatMessageResponse, error) {
 	service.called = true
 	service.chatID = chatID
 	service.chatRequest = request
@@ -76,19 +76,27 @@ func TestHandlerCreateChatReturnsSession(t *testing.T) {
 }
 
 func TestHandlerCreateChatMessageAcceptsJSON(t *testing.T) {
-	service := &fakeChatService{chatMessage: ChatMessageResponse{
-		UserMessage:      ChatMessage{ID: "msg_user", SessionID: "chat_test", Role: ChatMessageRoleUser, Content: "hi"},
-		AssistantMessage: &ChatMessage{ID: "msg_assistant", SessionID: "chat_test", Role: ChatMessageRoleAssistant, Content: "hello"},
-		Run:              RunResponse{RunID: testRunID, Status: RunStatusSucceeded, Answer: "hello"},
+	service := &fakeChatService{chatMessage: SubmitChatMessageResponse{
+		ChatID:      "chat_test",
+		UserMessage: ChatMessage{ID: "msg_user", SessionID: "chat_test", Role: ChatMessageRoleUser, Content: "hi"},
+		RunID:       testRunID,
+		Status:      RunStatusRunning,
 	}}
 	resp := testCreateChatMessageRequest(t, service, []byte(`{"message":"hi"}`))
 	defer closeAgentResponseBody(t, resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusAccepted)
 	}
 	if service.chatID != "chat_test" || service.chatRequest.Message != "hi" {
 		t.Fatalf("chat message call = %q %#v, want chat_test hi", service.chatID, service.chatRequest)
+	}
+	var body SubmitChatMessageResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if body.RunID != testRunID || body.Status != RunStatusRunning || body.UserMessage.ID != "msg_user" {
+		t.Fatalf("body = %#v, want async submit response", body)
 	}
 }
 
@@ -141,23 +149,23 @@ func TestHandlerListChatMessagesReturnsMessages(t *testing.T) {
 }
 
 func TestHandlerCreateChatMessageAcceptsMultipartFiles(t *testing.T) {
-	service := &fakeChatService{chatMessage: ChatMessageResponse{Run: RunResponse{RunID: testRunID, Status: RunStatusSucceeded}}}
+	service := &fakeChatService{chatMessage: SubmitChatMessageResponse{ChatID: "chat_test", RunID: testRunID, Status: RunStatusRunning}}
 	resp := performMultipartCreateChatMessage(t, service, "update catalog", "merchant_catalog.pdf", "application/pdf", []byte("%PDF-1.7"))
 	defer closeAgentResponseBody(t, resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusAccepted)
 	}
 	requireMultipartPDFRequest(t, service.chatRequest)
 }
 
 func TestHandlerCreateChatMessageAllowsAttachmentWithoutMessage(t *testing.T) {
-	service := &fakeChatService{chatMessage: ChatMessageResponse{Run: RunResponse{RunID: testRunID, Status: RunStatusSucceeded}}}
+	service := &fakeChatService{chatMessage: SubmitChatMessageResponse{ChatID: "chat_test", RunID: testRunID, Status: RunStatusRunning}}
 	resp := performMultipartCreateChatMessage(t, service, "", "accounts.csv", "text/csv", []byte("a,b\n"))
 	defer closeAgentResponseBody(t, resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusAccepted)
 	}
 	if len(service.chatRequest.Attachments) != 1 {
 		t.Fatalf("len(Attachments) = %d, want 1", len(service.chatRequest.Attachments))
@@ -204,7 +212,7 @@ func TestHandlerCreateChatMessageRejectsUnsupportedMultipartFile(t *testing.T) {
 }
 
 func TestHandlerCreateChatMessageAcceptsValidatedJSONAttachments(t *testing.T) {
-	service := &fakeChatService{chatMessage: ChatMessageResponse{Run: RunResponse{RunID: testRunID, Status: RunStatusSucceeded}}}
+	service := &fakeChatService{chatMessage: SubmitChatMessageResponse{ChatID: "chat_test", RunID: testRunID, Status: RunStatusRunning}}
 	body := []byte(`{
 		"message":"update catalog",
 		"attachments":[{
@@ -218,8 +226,8 @@ func TestHandlerCreateChatMessageAcceptsValidatedJSONAttachments(t *testing.T) {
 	resp := testCreateChatMessageRequestWithUploadConfig(t, service, body, UploadConfig{MaxFiles: 1, MaxFileBytes: 1024, MaxTotalBytes: 1024})
 	defer closeAgentResponseBody(t, resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusAccepted)
 	}
 	if len(service.chatRequest.Attachments) != 1 {
 		t.Fatalf("len(Attachments) = %d, want 1", len(service.chatRequest.Attachments))

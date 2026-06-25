@@ -222,6 +222,13 @@ type CreateChatMessageRequest struct {
 	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
+type SubmitChatMessageResponse struct {
+	ChatID      string      `json:"chat_id"`
+	UserMessage ChatMessage `json:"user_message"`
+	RunID       string      `json:"run_id"`
+	Status      RunStatus   `json:"status"`
+}
+
 type CreateChatSessionRecord struct {
 	Title string
 }

@@ -30,7 +30,7 @@ type ChatSessionService interface {
 
 type ChatMessageService interface {
 	ListChatMessages(ctx context.Context, chatID string) ([]ChatMessage, error)
-	CreateChatMessage(ctx context.Context, chatID string, request CreateChatMessageRequest) (ChatMessageResponse, error)
+	CreateChatMessage(ctx context.Context, chatID string, request CreateChatMessageRequest) (SubmitChatMessageResponse, error)
 }
 
 type Handler struct {
@@ -94,7 +94,7 @@ func (handler Handler) CreateChatMessage(c fiber.Ctx) error {
 		return writeChatError(c, err)
 	}
 
-	return c.Status(http.StatusOK).JSON(response)
+	return c.Status(http.StatusAccepted).JSON(response)
 }
 
 type userInputRequest struct {

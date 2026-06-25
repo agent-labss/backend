@@ -10,6 +10,7 @@ const (
 	ChatSessionPath  = ChatSessionsPath + "/:chat_id"
 	ChatMessagesPath = ChatSessionPath + "/messages"
 	ChatMessagePath  = ChatMessagesPath + "/:message_id"
+	ChatEventsPath   = ChatSessionPath + "/events"
 )
 
 const (

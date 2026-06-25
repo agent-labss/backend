@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"ai/backend/internal/database"
+	"ai/backend/internal/database/generated"
 	"ai/backend/internal/platform/sqlite"
 )
 
@@ -37,12 +38,15 @@ func TestRepositoryPersistsRunAndStep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveStep() error = %v, want nil", err)
 	}
-	var step database.AgentExecutionStep
-	if err := repository.database.WithContext(context.Background()).Where("execution_id = ?", run.ID).First(&step).Error; err != nil {
-		t.Fatalf("load saved step error = %v", err)
+	steps, err := generated.AgentExecutionStepQueries[database.AgentExecutionStep](repository.database).ListByExecutionID(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("load saved steps error = %v", err)
 	}
-	if step.ToolID != testToolID {
-		t.Fatalf("saved step ToolID = %q, want %s", step.ToolID, testToolID)
+	if len(steps) != 1 {
+		t.Fatalf("len(steps) = %d, want 1", len(steps))
+	}
+	if steps[0].ToolID != testToolID {
+		t.Fatalf("saved step ToolID = %q, want %s", steps[0].ToolID, testToolID)
 	}
 
 	run.Status = AgentExecutionStatusSucceeded
@@ -124,15 +128,11 @@ func TestRepositoryRedactsChatMessageBeforePersisting(t *testing.T) {
 		t.Fatalf("CreateChatMessage() error = %v", err)
 	}
 
-	var record database.ChatMessage
-	if err := repository.database.WithContext(context.Background()).Where("id = ?", saved.ID).First(&record).Error; err != nil {
-		t.Fatalf("load saved chat message error = %v", err)
+	if strings.Contains(saved.Content, testSecretToken) {
+		t.Fatalf("saved.Content = %q, want redacted token", saved.Content)
 	}
-	if strings.Contains(record.Content, testSecretToken) {
-		t.Fatalf("record.Content = %q, want redacted token", record.Content)
-	}
-	if !strings.Contains(record.Content, redactedValue) {
-		t.Fatalf("record.Content = %q, want redacted marker", record.Content)
+	if !strings.Contains(saved.Content, redactedValue) {
+		t.Fatalf("saved.Content = %q, want redacted marker", saved.Content)
 	}
 }
 
@@ -218,6 +218,9 @@ func TestRepositoryPersistsAndResolvesInterruption(t *testing.T) {
 	}
 	if _, err := repository.ActiveInterruption(context.Background(), session.ID); !errors.Is(err, ErrNoActiveInterruption) {
 		t.Fatalf("ActiveInterruption() error = %v, want ErrNoActiveInterruption", err)
+	}
+	if err := repository.ResolveInterruption(context.Background(), saved.ID, response.ID, InterruptionStatusResolved); !errors.Is(err, ErrAgentExecutionNotWaiting) {
+		t.Fatalf("ResolveInterruption() second error = %v, want ErrAgentExecutionNotWaiting", err)
 	}
 }
 

@@ -607,6 +607,43 @@ func TestServiceCreateChatMessagePassesAttachmentsToPlanner(t *testing.T) {
 	}
 }
 
+func TestServiceCreateChatMessageDoesNotExposeAttachmentData(t *testing.T) {
+	executionStore := newChatMemoryExecutionStore()
+	planner := &fakePlanner{actions: []PlannerAction{{Type: ActionTypeFinalAnswer, Answer: "done"}}}
+	bus := NewEventBusWithBuffer(8)
+	events, unsubscribe := bus.Subscribe("chat_test")
+	defer unsubscribe()
+	service := NewService(ServiceConfig{
+		Planner:             planner,
+		Catalog:             fakeCatalog{},
+		Executor:            &fakeExecutor{},
+		AgentExecutionStore: executionStores(executionStore),
+		MaxSteps:            8,
+		TotalTimeout:        time.Minute,
+		EventBus:            bus,
+		Schedule:            immediateRunScheduler,
+	})
+	attachments := []Attachment{{
+		ID:       "att_pdf",
+		Filename: "merchant_catalog.pdf",
+		MIMEType: "application/pdf",
+		Kind:     AttachmentKindPDF,
+		Size:     8,
+		Data:     "JVBERi0xLjc=",
+		FileID:   "file_internal",
+	}}
+
+	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "update catalog", Attachments: attachments})
+
+	if err != nil {
+		t.Fatalf("CreateChatMessage() error = %v", err)
+	}
+	requireAttachmentDataHidden(t, "response", response.UserMessage.Attachments[0])
+	messageCreated := assertNextEvent(t, events, EventTypeMessageCreated)
+	requireAttachmentDataHidden(t, "event", messageCreated.Message.Attachments[0])
+	requirePlannerAttachmentData(t, planner, attachments[0])
+}
+
 func TestServiceCreateChatMessageCreatesInterruptionAndAssistantMessage(t *testing.T) {
 	executionStore := newChatMemoryExecutionStore()
 	planner := &fakePlanner{actions: []PlannerAction{{
@@ -707,6 +744,32 @@ func requirePlannerSawInterruptionResume(t *testing.T, planner *fakePlanner) {
 	}
 	if len(planner.requests[0].Attachments) != 1 {
 		t.Fatalf("planner attachments = %d, want 1", len(planner.requests[0].Attachments))
+	}
+}
+
+func requireAttachmentDataHidden(t *testing.T, source string, attachment Attachment) {
+	t.Helper()
+
+	if attachment.Data != "" {
+		t.Fatalf("%s attachment Data = %q, want empty", source, attachment.Data)
+	}
+	if attachment.FileID != "" {
+		t.Fatalf("%s attachment FileID = %q, want empty", source, attachment.FileID)
+	}
+}
+
+func requirePlannerAttachmentData(t *testing.T, planner *fakePlanner, want Attachment) {
+	t.Helper()
+
+	if len(planner.requests) != 1 {
+		t.Fatalf("planner requests = %#v, want one request", planner.requests)
+	}
+	got := planner.requests[0].Attachments[0]
+	if got.Data != want.Data {
+		t.Fatalf("planner attachment Data = %q, want %q", got.Data, want.Data)
+	}
+	if got.FileID != want.FileID {
+		t.Fatalf("planner attachment FileID = %q, want %q", got.FileID, want.FileID)
 	}
 }
 

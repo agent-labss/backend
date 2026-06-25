@@ -37,6 +37,9 @@ type AgentExecutionQueries interface {
 type AgentExecutionStepQueries interface {
 	// SELECT * FROM @@table WHERE id = @id LIMIT 1
 	GetByID(id string) (database.AgentExecutionStep, error)
+
+	// SELECT * FROM @@table WHERE execution_id = @executionID ORDER BY step_order ASC
+	ListByExecutionID(executionID string) ([]database.AgentExecutionStep, error)
 }
 
 type ChatSessionQueries interface {
@@ -67,8 +70,8 @@ type AgentInterruptionQueries interface {
 	// SELECT * FROM @@table WHERE session_id = @sessionID AND status = @status ORDER BY created_at DESC LIMIT 1
 	ActiveBySessionID(sessionID string, status string) (database.AgentInterruption, error)
 
-	// UPDATE @@table SET status = @status, response_message_id = @messageID, resolved_at = @resolvedAt WHERE id = @id AND status = @awaitingStatus
-	ResolveAwaitingByID(status string, messageID string, resolvedAt sql.NullTime, id string, awaitingStatus string) error
+	// UPDATE @@table SET status = @status, response_message_id = @messageID, resolved_at = @resolvedAt WHERE id = @id AND status = @awaitingStatus RETURNING *
+	ResolveAwaitingByID(status string, messageID string, resolvedAt sql.NullTime, id string, awaitingStatus string) (database.AgentInterruption, error)
 }
 
 type AgentExecutionObservationQueries interface {

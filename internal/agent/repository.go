@@ -123,7 +123,7 @@ func (repository Repository) ListChatMessages(ctx context.Context, sessionID str
 	messages := make([]ChatMessage, 0, len(records))
 	for _, record := range records {
 		message := chatMessageFromRecord(record)
-		message.Attachments = attachments[record.ID]
+		message.Attachments = attachmentMetadataList(attachments[record.ID])
 		messages = append(messages, message)
 	}
 	return messages, nil
@@ -150,7 +150,7 @@ func (repository Repository) CreateChatMessage(ctx context.Context, record Creat
 			Content:     RedactText(record.Content),
 			Status:      ChatMessageStatusCompleted,
 			Sequence:    maxSequence + 1,
-			Attachments: record.Attachments,
+			Attachments: attachmentMetadataList(record.Attachments),
 			CreatedAt:   now,
 			CompletedAt: now,
 		}
@@ -319,8 +319,12 @@ func (repository Repository) ResolveInterruption(ctx context.Context, interrupti
 	if status == "" {
 		status = InterruptionStatusResolved
 	}
-	if err := generated.AgentInterruptionQueries[database.AgentInterruption](repository.database).ResolveAwaitingByID(ctx, string(status), messageID, sql.NullTime{Time: time.Now().UTC(), Valid: true}, interruptionID, string(InterruptionStatusAwaitingReview)); err != nil {
+	record, err := generated.AgentInterruptionQueries[database.AgentInterruption](repository.database).ResolveAwaitingByID(ctx, string(status), messageID, sql.NullTime{Time: time.Now().UTC(), Valid: true}, interruptionID, string(InterruptionStatusAwaitingReview))
+	if err != nil {
 		return fmt.Errorf("resolve interruption: %w", err)
+	}
+	if record.ID == "" {
+		return ErrAgentExecutionNotWaiting
 	}
 
 	return nil

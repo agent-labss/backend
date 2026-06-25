@@ -33,13 +33,35 @@ var allowedPackages = []string{
 }
 
 var forbiddenProductionSQLPatterns = []string{
-	".Where(\"",
-	".Order(\"",
-	".First(&",
-	".Find(&",
-	".Scan(&",
-	".Save(&",
-	".Exec(ctx, `",
+	".Clauses(",
+	".Count(",
+	".Delete(",
+	".Exec(",
+	".Find(",
+	".First(",
+	".Last(",
+	".Model(",
+	".Order(",
+	".Raw(",
+	".Row(",
+	".Rows(",
+	".Save(",
+	".Scan(",
+	".Table(",
+	".Take(",
+	".Update(",
+	".Updates(",
+	".Where(",
+	"gorm.WithResult(",
+	"gorm.io/cli/gorm/field",
+	"gorm.io/cli/gorm/typed",
+}
+
+var databaseAccessImports = []string{
+	`"ai/backend/internal/database/generated"`,
+	`"gorm.io/gorm"`,
+	`"gorm.io/cli/gorm/field"`,
+	`"gorm.io/cli/gorm/typed"`,
 }
 
 type packageInfo struct {
@@ -202,10 +224,22 @@ func firstForbiddenProductionSQLPattern(t *testing.T, source string) string {
 		t.Fatalf("read %s: %v", source, err)
 	}
 	text := string(content)
+	if !containsAny(text, databaseAccessImports) {
+		return ""
+	}
 	for _, forbidden := range forbiddenProductionSQLPatterns {
 		if strings.Contains(text, forbidden) {
 			return forbidden
 		}
 	}
 	return ""
+}
+
+func containsAny(text string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if strings.Contains(text, pattern) {
+			return true
+		}
+	}
+	return false
 }

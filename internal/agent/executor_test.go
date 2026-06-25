@@ -104,6 +104,27 @@ print(json.dumps({"status":"ok","outputs":{"received":{"sensitive":False,"value"
 	assertNestedSessionResolved(t, requests[0], []string{"session"})
 }
 
+func TestCLIExecutorFailsOnUnresolvedContextReference(t *testing.T) {
+	commandPath := writeToolScript(t, "#!/usr/bin/env sh\ncat >/dev/null\nprintf '%s\n' '{\"status\":\"ok\"}'\n")
+
+	executor := NewCLIExecutor()
+	_, err := executor.Execute(context.Background(), ExecuteRequest{
+		ExecutionID:      testExecutionID,
+		StepID:           testStepID,
+		StepOrder:        1,
+		Tool:             toolcatalog.Tool{Name: "needs_session", CommandPath: commandPath, TimeoutMS: 1000},
+		Inputs:           map[string]any{"session": testSessionRef},
+		ExecutionContext: NewExecutionContext(),
+	})
+
+	if err == nil {
+		t.Fatal("Execute() error = nil, want unresolved context reference error")
+	}
+	if !strings.Contains(err.Error(), "unresolved context reference") {
+		t.Fatalf("Execute() error = %q, want unresolved context reference", err)
+	}
+}
+
 func TestCLIExecutorSensitiveOutputReferencesDoNotCollideForRepeatedTool(t *testing.T) {
 	commandPath := writeToolScript(t, `#!/usr/bin/env sh
 python3 -c '

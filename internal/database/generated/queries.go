@@ -150,6 +150,7 @@ func AgentExecutionStepQueries[T any](db *gorm.DB, opts ...clause.Expression) _A
 type _AgentExecutionStepQueriesInterface[T any] interface {
 	typed.Interface[T]
 	GetByID(ctx context.Context, id string) (database.AgentExecutionStep, error)
+	ListByExecutionID(ctx context.Context, executionID string) ([]database.AgentExecutionStep, error)
 }
 
 type _AgentExecutionStepQueriesImpl[T any] struct {
@@ -164,6 +165,18 @@ func (e _AgentExecutionStepQueriesImpl[T]) GetByID(ctx context.Context, id strin
 	_params = append(_params, clause.Table{Name: clause.CurrentTable}, id)
 
 	var result database.AgentExecutionStep
+	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
+	return result, err
+}
+
+func (e _AgentExecutionStepQueriesImpl[T]) ListByExecutionID(ctx context.Context, executionID string) ([]database.AgentExecutionStep, error) {
+	var sb strings.Builder
+	_params := make([]any, 0, 2)
+
+	sb.WriteString("SELECT * FROM ? WHERE execution_id = ? ORDER BY step_order ASC")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, executionID)
+
+	var result []database.AgentExecutionStep
 	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
 	return result, err
 }
@@ -283,7 +296,7 @@ type _AgentInterruptionQueriesInterface[T any] interface {
 	typed.Interface[T]
 	ListByExecutionID(ctx context.Context, executionID string) ([]database.AgentInterruption, error)
 	ActiveBySessionID(ctx context.Context, sessionID string, status string) (database.AgentInterruption, error)
-	ResolveAwaitingByID(ctx context.Context, status string, messageID string, resolvedAt sql.NullTime, id string, awaitingStatus string) error
+	ResolveAwaitingByID(ctx context.Context, status string, messageID string, resolvedAt sql.NullTime, id string, awaitingStatus string) (database.AgentInterruption, error)
 }
 
 type _AgentInterruptionQueriesImpl[T any] struct {
@@ -314,14 +327,16 @@ func (e _AgentInterruptionQueriesImpl[T]) ActiveBySessionID(ctx context.Context,
 	return result, err
 }
 
-func (e _AgentInterruptionQueriesImpl[T]) ResolveAwaitingByID(ctx context.Context, status string, messageID string, resolvedAt sql.NullTime, id string, awaitingStatus string) error {
+func (e _AgentInterruptionQueriesImpl[T]) ResolveAwaitingByID(ctx context.Context, status string, messageID string, resolvedAt sql.NullTime, id string, awaitingStatus string) (database.AgentInterruption, error) {
 	var sb strings.Builder
 	_params := make([]any, 0, 6)
 
-	sb.WriteString("UPDATE ? SET status = ?, response_message_id = ?, resolved_at = ? WHERE id = ? AND status = ?")
+	sb.WriteString("UPDATE ? SET status = ?, response_message_id = ?, resolved_at = ? WHERE id = ? AND status = ? RETURNING *")
 	_params = append(_params, clause.Table{Name: clause.CurrentTable}, status, messageID, resolvedAt, id, awaitingStatus)
 
-	return e.Exec(ctx, sb.String(), _params...)
+	var result database.AgentInterruption
+	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
+	return result, err
 }
 
 func AgentExecutionObservationQueries[T any](db *gorm.DB, opts ...clause.Expression) _AgentExecutionObservationQueriesInterface[T] {

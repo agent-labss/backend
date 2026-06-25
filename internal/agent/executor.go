@@ -14,6 +14,7 @@ import (
 )
 
 var ErrToolExecutionFailed = errors.New("tool execution failed")
+var ErrUnresolvedContextReference = errors.New("unresolved context reference")
 
 type ExecuteRequest struct {
 	ExecutionID      string
@@ -50,7 +51,11 @@ func (executor CLIExecutor) runCommand(parent context.Context, request ExecuteRe
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
-	stdin, err := json.Marshal(executor.inputEnvelope(request, executionContext))
+	envelope, err := executor.inputEnvelope(request, executionContext)
+	if err != nil {
+		return nil, err
+	}
+	stdin, err := json.Marshal(envelope)
 	if err != nil {
 		return nil, fmt.Errorf("%w: encode stdin: %w", ErrToolExecutionFailed, err)
 	}
@@ -70,15 +75,19 @@ func (executor CLIExecutor) runCommand(parent context.Context, request ExecuteRe
 	return stdout.Bytes(), nil
 }
 
-func (executor CLIExecutor) inputEnvelope(request ExecuteRequest, executionContext *ExecutionContext) ToolInputEnvelope {
+func (executor CLIExecutor) inputEnvelope(request ExecuteRequest, executionContext *ExecutionContext) (ToolInputEnvelope, error) {
+	inputs, err := resolveInputs(request.Inputs, executionContext)
+	if err != nil {
+		return ToolInputEnvelope{}, err
+	}
 	envelope := ToolInputEnvelope{
 		ExecutionID: request.ExecutionID,
 		StepID:      request.StepID,
-		Inputs:      resolveInputs(request.Inputs, executionContext),
+		Inputs:      inputs,
 		Context:     map[string]any{},
 	}
 
-	return envelope
+	return envelope, nil
 }
 
 func commandError(ctx context.Context, toolName string, stderr string, err error) error {
@@ -145,37 +154,63 @@ func outputsFromToolResult(request ExecuteRequest, executionContext *ExecutionCo
 	return outputs
 }
 
-func resolveInputs(inputs map[string]any, executionContext *ExecutionContext) map[string]any {
+func resolveInputs(inputs map[string]any, executionContext *ExecutionContext) (map[string]any, error) {
 	resolved := make(map[string]any, len(inputs))
 	for key, value := range inputs {
-		resolveInputValueInto(resolved, key, value, executionContext)
+		if err := resolveInputValueInto(resolved, key, value, executionContext); err != nil {
+			return nil, err
+		}
 	}
 
-	return resolved
+	return resolved, nil
 }
 
-func resolveInputValueInto(resolved map[string]any, key string, value any, executionContext *ExecutionContext) {
+func resolveInputValueInto(resolved map[string]any, key string, value any, executionContext *ExecutionContext) error {
 	switch typed := value.(type) {
 	case string:
-		contextValue, ok := executionContext.Resolve(typed)
-		if !ok {
-			resolved[key] = value
-			return
-		}
-		resolved[key] = contextValue.Value
+		return resolveStringInputInto(resolved, key, typed, executionContext)
 	case map[string]any:
-		resolved[key] = resolveInputs(typed, executionContext)
+		nested, err := resolveInputs(typed, executionContext)
+		if err != nil {
+			return err
+		}
+		resolved[key] = nested
 	case []any:
-		resolvedSlice := make([]any, 0, len(typed))
-		for _, item := range typed {
-			wrapped := make(map[string]any, 1)
-			resolveInputValueInto(wrapped, key, item, executionContext)
-			resolvedSlice = append(resolvedSlice, wrapped[key])
+		resolvedSlice, err := resolveInputSlice(key, typed, executionContext)
+		if err != nil {
+			return err
 		}
 		resolved[key] = resolvedSlice
 	default:
 		resolved[key] = value
 	}
+
+	return nil
+}
+
+func resolveStringInputInto(resolved map[string]any, key string, value string, executionContext *ExecutionContext) error {
+	contextValue, ok := executionContext.Resolve(value)
+	if !ok {
+		if isContextReference(value) {
+			return fmt.Errorf("%w: %s", ErrUnresolvedContextReference, value)
+		}
+		resolved[key] = value
+		return nil
+	}
+	resolved[key] = contextValue.Value
+	return nil
+}
+
+func resolveInputSlice(key string, values []any, executionContext *ExecutionContext) ([]any, error) {
+	resolvedSlice := make([]any, 0, len(values))
+	for _, item := range values {
+		wrapped := make(map[string]any, 1)
+		if err := resolveInputValueInto(wrapped, key, item, executionContext); err != nil {
+			return nil, err
+		}
+		resolvedSlice = append(resolvedSlice, wrapped[key])
+	}
+	return resolvedSlice, nil
 }
 
 func requestExecutionContext(request ExecuteRequest) *ExecutionContext {

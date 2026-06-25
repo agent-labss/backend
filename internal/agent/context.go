@@ -29,7 +29,7 @@ func (context *ExecutionContext) Store(stepID string, toolName string, outputNam
 }
 
 func (context *ExecutionContext) Resolve(value string) (ContextValue, bool) {
-	if !strings.HasPrefix(value, contextReferencePrefix) {
+	if !isContextReference(value) {
 		return ContextValue{}, false
 	}
 
@@ -37,4 +37,8 @@ func (context *ExecutionContext) Resolve(value string) (ContextValue, bool) {
 	defer context.mutex.RUnlock()
 	resolved, ok := context.values[value]
 	return ContextValue{Value: resolved}, ok
+}
+
+func isContextReference(value string) bool {
+	return strings.HasPrefix(value, contextReferencePrefix)
 }

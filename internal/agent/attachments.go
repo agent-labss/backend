@@ -138,3 +138,20 @@ func attachmentPromptView(attachment Attachment) map[string]any {
 		"file_id":   attachment.FileID,
 	}
 }
+
+func attachmentMetadata(attachment Attachment) Attachment {
+	attachment.Data = ""
+	attachment.FileID = ""
+	return attachment
+}
+
+func attachmentMetadataList(attachments []Attachment) []Attachment {
+	if len(attachments) == 0 {
+		return nil
+	}
+	metadata := make([]Attachment, 0, len(attachments))
+	for _, attachment := range attachments {
+		metadata = append(metadata, attachmentMetadata(attachment))
+	}
+	return metadata
+}

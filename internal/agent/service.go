@@ -175,6 +175,7 @@ func (service Service) CreateChatMessage(ctx context.Context, sessionID string, 
 	if err != nil {
 		return SubmitChatMessageResponse{}, fmt.Errorf("create user message: %w", err)
 	}
+	userMessage = chatMessageMetadata(userMessage)
 	service.publishMessageCreated(userMessage)
 
 	active, err := service.executionStore.activeInterruption(ctx, sessionID)
@@ -305,6 +306,7 @@ func (service Service) publishInterruptionCreated(execution AgentExecution, sess
 }
 
 func (service Service) publishMessageCreated(message ChatMessage) {
+	message = chatMessageMetadata(message)
 	service.eventBus.Publish(message.SessionID, ChatEvent{
 		Type:        EventTypeMessageCreated,
 		ChatID:      message.SessionID,
@@ -681,4 +683,9 @@ func nonNilMap(value map[string]any) map[string]any {
 	}
 
 	return value
+}
+
+func chatMessageMetadata(message ChatMessage) ChatMessage {
+	message.Attachments = attachmentMetadataList(message.Attachments)
+	return message
 }

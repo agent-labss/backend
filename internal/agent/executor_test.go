@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	testRunID       = "run_1"
+	testExecutionID = "exec_1"
 	testStepID      = "step_1"
 	testSessionRef  = "ctx://step_1/login/session"
 	testCookieValue = "cookie-value"
@@ -27,14 +27,14 @@ printf '%s\n' '{"status":"ok","outputs":{"session":{"sensitive":true,"value":"`+
 `)
 
 	executor := NewCLIExecutor()
-	runContext := NewRunContext()
+	executionContext := NewExecutionContext()
 	observation, err := executor.Execute(context.Background(), ExecuteRequest{
-		RunID:      testRunID,
-		StepID:     testStepID,
-		StepOrder:  1,
-		Tool:       toolcatalog.Tool{Name: "login", CommandPath: commandPath, TimeoutMS: 1000},
-		Inputs:     map[string]any{},
-		RunContext: runContext,
+		ExecutionID:      testExecutionID,
+		StepID:           testStepID,
+		StepOrder:        1,
+		Tool:             toolcatalog.Tool{Name: "login", CommandPath: commandPath, TimeoutMS: 1000},
+		Inputs:           map[string]any{},
+		ExecutionContext: executionContext,
 	})
 
 	if err != nil {
@@ -46,7 +46,7 @@ printf '%s\n' '{"status":"ok","outputs":{"session":{"sensitive":true,"value":"`+
 	if observation.Outputs["partner_id"] != testPartnerID {
 		t.Fatalf("partner_id output = %v, want %s", observation.Outputs["partner_id"], testPartnerID)
 	}
-	resolved, ok := runContext.Resolve(testSessionRef)
+	resolved, ok := executionContext.Resolve(testSessionRef)
 	if !ok || resolved.Value != testCookieValue {
 		t.Fatalf("resolved session = %v, %v; want %s, true", resolved.Value, ok, testCookieValue)
 	}
@@ -64,8 +64,8 @@ print(json.dumps({"status":"ok","outputs":{"received":{"sensitive":False,"value"
 `)
 
 	executor := NewCLIExecutor()
-	runContext := NewRunContext()
-	runContext.Store(testStepID, "login", "session", map[string]any{
+	executionContext := NewExecutionContext()
+	executionContext.Store(testStepID, "login", "session", map[string]any{
 		"access_token": testSecretToken,
 		"user": map[string]any{
 			"id": "u_123",
@@ -73,10 +73,10 @@ print(json.dumps({"status":"ok","outputs":{"received":{"sensitive":False,"value"
 	})
 
 	observation, err := executor.Execute(context.Background(), ExecuteRequest{
-		RunID:     testRunID,
-		StepID:    testStepID,
-		StepOrder: 1,
-		Tool:      toolcatalog.Tool{Name: "nested", CommandPath: commandPath, TimeoutMS: 1000},
+		ExecutionID: testExecutionID,
+		StepID:      testStepID,
+		StepOrder:   1,
+		Tool:        toolcatalog.Tool{Name: "nested", CommandPath: commandPath, TimeoutMS: 1000},
 		Inputs: map[string]any{
 			"auth": map[string]any{
 				"session": testSessionRef,
@@ -85,7 +85,7 @@ print(json.dumps({"status":"ok","outputs":{"received":{"sensitive":False,"value"
 				map[string]any{"session": testSessionRef},
 			},
 		},
-		RunContext: runContext,
+		ExecutionContext: executionContext,
 	})
 
 	if err != nil {
@@ -117,24 +117,24 @@ print(json.dumps({"status":"ok","outputs":{"session":{"sensitive":True,"value":v
 `)
 
 	executor := NewCLIExecutor()
-	runContext := NewRunContext()
+	executionContext := NewExecutionContext()
 
 	first, err := executor.Execute(context.Background(), ExecuteRequest{
-		RunID:      testRunID,
-		StepID:     "step_1",
-		StepOrder:  1,
-		Tool:       toolcatalog.Tool{Name: "login", CommandPath: commandPath, TimeoutMS: 1000},
-		RunContext: runContext,
+		ExecutionID:      testExecutionID,
+		StepID:           "step_1",
+		StepOrder:        1,
+		Tool:             toolcatalog.Tool{Name: "login", CommandPath: commandPath, TimeoutMS: 1000},
+		ExecutionContext: executionContext,
 	})
 	if err != nil {
 		t.Fatalf("first Execute() error = %v", err)
 	}
 	second, err := executor.Execute(context.Background(), ExecuteRequest{
-		RunID:      testRunID,
-		StepID:     "step_2",
-		StepOrder:  2,
-		Tool:       toolcatalog.Tool{Name: "login", CommandPath: commandPath, TimeoutMS: 1000},
-		RunContext: runContext,
+		ExecutionID:      testExecutionID,
+		StepID:           "step_2",
+		StepOrder:        2,
+		Tool:             toolcatalog.Tool{Name: "login", CommandPath: commandPath, TimeoutMS: 1000},
+		ExecutionContext: executionContext,
 	})
 	if err != nil {
 		t.Fatalf("second Execute() error = %v", err)
@@ -145,8 +145,8 @@ print(json.dumps({"status":"ok","outputs":{"session":{"sensitive":True,"value":v
 	if firstRef == secondRef {
 		t.Fatalf("session refs both = %q, want distinct refs", firstRef)
 	}
-	requireResolvedContextValue(t, runContext, firstRef, "cookie-step_1")
-	requireResolvedContextValue(t, runContext, secondRef, "cookie-step_2")
+	requireResolvedContextValue(t, executionContext, firstRef, "cookie-step_1")
+	requireResolvedContextValue(t, executionContext, secondRef, "cookie-step_2")
 }
 
 func TestCLIExecutorDoesNotExposeBackendEnvironmentToTools(t *testing.T) {
@@ -168,11 +168,11 @@ print(json.dumps({"status":"ok","outputs":{"env":{"sensitive":False,"value":{
 
 	executor := NewCLIExecutor()
 	observation, err := executor.Execute(context.Background(), ExecuteRequest{
-		RunID:      testRunID,
-		StepID:     testStepID,
-		StepOrder:  1,
-		Tool:       toolcatalog.Tool{Name: "env", CommandPath: commandPath, TimeoutMS: 1000},
-		RunContext: NewRunContext(),
+		ExecutionID:      testExecutionID,
+		StepID:           testStepID,
+		StepOrder:        1,
+		Tool:             toolcatalog.Tool{Name: "env", CommandPath: commandPath, TimeoutMS: 1000},
+		ExecutionContext: NewExecutionContext(),
 	})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -202,11 +202,11 @@ func TestCLIExecutorFailsOnInvalidJSON(t *testing.T) {
 
 	executor := NewCLIExecutor()
 	_, err := executor.Execute(context.Background(), ExecuteRequest{
-		RunID:      testRunID,
-		StepID:     testStepID,
-		StepOrder:  1,
-		Tool:       toolcatalog.Tool{Name: "bad", CommandPath: commandPath, TimeoutMS: 1000},
-		RunContext: NewRunContext(),
+		ExecutionID:      testExecutionID,
+		StepID:           testStepID,
+		StepOrder:        1,
+		Tool:             toolcatalog.Tool{Name: "bad", CommandPath: commandPath, TimeoutMS: 1000},
+		ExecutionContext: NewExecutionContext(),
 	})
 
 	if err == nil {
@@ -221,11 +221,11 @@ printf '%s\n' '{"status":"error","error":{"code":"partner_not_found","message":"
 
 	executor := NewCLIExecutor()
 	observation, err := executor.Execute(context.Background(), ExecuteRequest{
-		RunID:      testRunID,
-		StepID:     testStepID,
-		StepOrder:  1,
-		Tool:       toolcatalog.Tool{Name: "find_partner", CommandPath: commandPath, TimeoutMS: 1000},
-		RunContext: NewRunContext(),
+		ExecutionID:      testExecutionID,
+		StepID:           testStepID,
+		StepOrder:        1,
+		Tool:             toolcatalog.Tool{Name: "find_partner", CommandPath: commandPath, TimeoutMS: 1000},
+		ExecutionContext: NewExecutionContext(),
 	})
 
 	if err != nil {
@@ -239,16 +239,26 @@ printf '%s\n' '{"status":"error","error":{"code":"partner_not_found","message":"
 	}
 }
 
+func TestToolInputEnvelopeJSONUsesExecutionID(t *testing.T) {
+	body, err := json.Marshal(ToolInputEnvelope{ExecutionID: "exec_test", StepID: "step_1"})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if strings.Contains(string(body), "run_id") || !strings.Contains(string(body), "execution_id") {
+		t.Fatalf("envelope JSON = %s, want execution_id and no run_id", body)
+	}
+}
+
 func TestCLIExecutorRedactsStderrOnFailure(t *testing.T) {
 	commandPath := writeToolScript(t, "#!/usr/bin/env sh\necho 'Authorization: Bearer "+testSecretToken+"' >&2\nexit 2\n")
 
 	executor := NewCLIExecutor()
 	_, err := executor.Execute(context.Background(), ExecuteRequest{
-		RunID:      testRunID,
-		StepID:     testStepID,
-		StepOrder:  1,
-		Tool:       toolcatalog.Tool{Name: "fail", CommandPath: commandPath, TimeoutMS: 1000},
-		RunContext: NewRunContext(),
+		ExecutionID:      testExecutionID,
+		StepID:           testStepID,
+		StepOrder:        1,
+		Tool:             toolcatalog.Tool{Name: "fail", CommandPath: commandPath, TimeoutMS: 1000},
+		ExecutionContext: NewExecutionContext(),
 	})
 
 	if err == nil {
@@ -264,11 +274,11 @@ func TestCLIExecutorTimesOut(t *testing.T) {
 
 	executor := NewCLIExecutor()
 	_, err := executor.Execute(context.Background(), ExecuteRequest{
-		RunID:      testRunID,
-		StepID:     testStepID,
-		StepOrder:  1,
-		Tool:       toolcatalog.Tool{Name: "slow", CommandPath: commandPath, TimeoutMS: 10},
-		RunContext: NewRunContext(),
+		ExecutionID:      testExecutionID,
+		StepID:           testStepID,
+		StepOrder:        1,
+		Tool:             toolcatalog.Tool{Name: "slow", CommandPath: commandPath, TimeoutMS: 10},
+		ExecutionContext: NewExecutionContext(),
 	})
 
 	if err == nil {
@@ -319,10 +329,10 @@ func requireStringOutput(t *testing.T, observation Observation, name string) str
 	return value
 }
 
-func requireResolvedContextValue(t *testing.T, runContext *RunContext, ref string, want string) {
+func requireResolvedContextValue(t *testing.T, executionContext *ExecutionContext, ref string, want string) {
 	t.Helper()
 
-	resolved, ok := runContext.Resolve(ref)
+	resolved, ok := executionContext.Resolve(ref)
 	if !ok || resolved.Value != want {
 		t.Fatalf("resolved %s = %v, %v; want %s, true", ref, resolved.Value, ok, want)
 	}

@@ -63,7 +63,7 @@ Keep package ownership intact:
 - `internal/platform/sqlite` owns SQLite connectivity and migration only.
 - `internal/status` owns status behavior only.
 - `internal/toolcatalog` owns tool metadata, trusted command validation, instruction storage, and related handlers/services only.
-- `internal/agent` owns agent runs, OpenAI planning, CLI execution, redaction, run context, audit persistence, and related handlers/services only.
+- `internal/agent` owns agent executions, OpenAI planning, CLI execution, redaction, execution context, audit persistence, and related handlers/services only.
 
 Do not bypass package boundaries. In particular, HTTP routing helpers must not import database platform packages, status logic must not import HTTP or platform packages, domain packages must not import `internal/platform/datastore` or `internal/platform/sqlite`, and platform packages must not import application, HTTP, status, agent, or tool catalog packages.
 

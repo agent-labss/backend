@@ -59,7 +59,7 @@ type AgentInstruction struct {
 	UpdatedAt time.Time `gorm:"not null"`
 }
 
-type AgentRun struct {
+type AgentExecution struct {
 	ID               string    `gorm:"primaryKey;type:text"`
 	SessionID        string    `gorm:"not null;default:'';index"`
 	TriggerMessageID string    `gorm:"not null;default:'';index"`
@@ -80,7 +80,7 @@ type ChatSession struct {
 type ChatMessage struct {
 	ID           string    `gorm:"primaryKey;type:text"`
 	SessionID    string    `gorm:"not null;index"`
-	RunID        string    `gorm:"not null;default:'';index"`
+	ExecutionID  string    `gorm:"not null;default:'';index"`
 	Role         string    `gorm:"not null;index"`
 	Content      string    `gorm:"not null"`
 	Status       string    `gorm:"not null;index"`
@@ -108,7 +108,7 @@ type ChatAttachment struct {
 type AgentInterruption struct {
 	ID                string    `gorm:"primaryKey;type:text"`
 	SessionID         string    `gorm:"not null;index"`
-	RunID             string    `gorm:"not null;index"`
+	ExecutionID       string    `gorm:"not null;index"`
 	Type              string    `gorm:"not null;index"`
 	Status            string    `gorm:"not null;index"`
 	Message           string    `gorm:"not null"`
@@ -116,31 +116,31 @@ type AgentInterruption struct {
 	ResponseMessageID string    `gorm:"not null;default:'';index"`
 	CreatedAt         time.Time `gorm:"not null"`
 	ResolvedAt        sql.NullTime
-	Session           ChatSession `gorm:"foreignKey:SessionID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
-	Run               AgentRun    `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+	Session           ChatSession    `gorm:"foreignKey:SessionID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+	AgentExecution    AgentExecution `gorm:"foreignKey:ExecutionID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
 }
 
-type AgentRunObservation struct {
-	ID        string    `gorm:"primaryKey;type:text"`
-	RunID     string    `gorm:"not null;index"`
-	StepOrder int       `gorm:"not null"`
-	Payload   JSON      `gorm:"type:json;not null"`
-	CreatedAt time.Time `gorm:"not null"`
-	Run       AgentRun  `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+type AgentExecutionObservation struct {
+	ID             string         `gorm:"primaryKey;type:text"`
+	ExecutionID    string         `gorm:"not null;index"`
+	StepOrder      int            `gorm:"not null"`
+	Payload        JSON           `gorm:"type:json;not null"`
+	CreatedAt      time.Time      `gorm:"not null"`
+	AgentExecution AgentExecution `gorm:"foreignKey:ExecutionID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
 }
 
-type AgentRunStep struct {
-	ID            string    `gorm:"primaryKey;type:text"`
-	RunID         string    `gorm:"not null;index"`
-	StepOrder     int       `gorm:"not null"`
-	ToolID        string    `gorm:"not null;index"`
-	InputSummary  JSON      `gorm:"type:json;not null"`
-	OutputSummary JSON      `gorm:"type:json;not null"`
-	DurationMS    int64     `gorm:"not null"`
-	Status        string    `gorm:"not null"`
-	ErrorSummary  string    `gorm:"not null;default:''"`
-	CreatedAt     time.Time `gorm:"not null"`
-	Run           AgentRun  `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+type AgentExecutionStep struct {
+	ID             string         `gorm:"primaryKey;type:text"`
+	ExecutionID    string         `gorm:"not null;index"`
+	StepOrder      int            `gorm:"not null"`
+	ToolID         string         `gorm:"not null;index"`
+	InputSummary   JSON           `gorm:"type:json;not null"`
+	OutputSummary  JSON           `gorm:"type:json;not null"`
+	DurationMS     int64          `gorm:"not null"`
+	Status         string         `gorm:"not null"`
+	ErrorSummary   string         `gorm:"not null;default:''"`
+	CreatedAt      time.Time      `gorm:"not null"`
+	AgentExecution AgentExecution `gorm:"foreignKey:ExecutionID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
 }
 
 func Models() []any {
@@ -150,9 +150,9 @@ func Models() []any {
 		&ChatSession{},
 		&ChatMessage{},
 		&ChatAttachment{},
-		&AgentRun{},
+		&AgentExecution{},
 		&AgentInterruption{},
-		&AgentRunObservation{},
-		&AgentRunStep{},
+		&AgentExecutionObservation{},
+		&AgentExecutionStep{},
 	}
 }

@@ -14,10 +14,10 @@ const (
 )
 
 const (
-	RunStatusRunning     RunStatus = "running"
-	RunStatusInterrupted RunStatus = "interrupted"
-	RunStatusSucceeded   RunStatus = "succeeded"
-	RunStatusFailed      RunStatus = "failed"
+	AgentExecutionStatusRunning     AgentExecutionStatus = "running"
+	AgentExecutionStatusInterrupted AgentExecutionStatus = "interrupted"
+	AgentExecutionStatusSucceeded   AgentExecutionStatus = "succeeded"
+	AgentExecutionStatusFailed      AgentExecutionStatus = "failed"
 )
 
 const (
@@ -71,7 +71,7 @@ const (
 	ChatMessageStatusFailed    ChatMessageStatus = "failed"
 )
 
-type RunStatus string
+type AgentExecutionStatus string
 type StepStatus string
 type ToolResultStatus string
 type ActionType string
@@ -82,7 +82,7 @@ type ChatSessionStatus string
 type ChatMessageRole string
 type ChatMessageStatus string
 
-type runRequest struct {
+type executionRequest struct {
 	Message     string       `json:"message"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 }
@@ -109,25 +109,25 @@ type UploadConfig struct {
 	MaxTotalBytes int
 }
 
-type CreateRunRecord struct {
+type CreateAgentExecutionRecord struct {
 	SessionID        string
 	TriggerMessageID string
 }
 
-type RunResponse struct {
-	RunID        string         `json:"run_id"`
-	Status       RunStatus      `json:"status"`
-	Answer       string         `json:"answer,omitempty"`
-	Outputs      map[string]any `json:"outputs,omitempty"`
-	Error        string         `json:"error,omitempty"`
-	Interruption *Interruption  `json:"interruption,omitempty"`
+type AgentExecutionResponse struct {
+	ExecutionID  string               `json:"execution_id"`
+	Status       AgentExecutionStatus `json:"status"`
+	Answer       string               `json:"answer,omitempty"`
+	Outputs      map[string]any       `json:"outputs,omitempty"`
+	Error        string               `json:"error,omitempty"`
+	Interruption *Interruption        `json:"interruption,omitempty"`
 }
 
-type Run struct {
+type AgentExecution struct {
 	ID               string
 	SessionID        string
 	TriggerMessageID string
-	Status           RunStatus
+	Status           AgentExecutionStatus
 	ErrorSummary     string
 	StartedAt        time.Time
 	FinishedAt       time.Time
@@ -136,7 +136,7 @@ type Run struct {
 type Interruption struct {
 	ID          string             `json:"id"`
 	SessionID   string             `json:"session_id,omitempty"`
-	RunID       string             `json:"run_id,omitempty"`
+	ExecutionID string             `json:"execution_id,omitempty"`
 	Type        InterruptionType   `json:"type"`
 	Status      InterruptionStatus `json:"status,omitempty"`
 	Message     string             `json:"message"`
@@ -146,13 +146,13 @@ type Interruption struct {
 }
 
 type ObservationRecord struct {
-	RunID       string
+	ExecutionID string
 	StepOrder   int
 	Observation Observation
 }
 
-type RunStateRecord struct {
-	Run                Run
+type AgentExecutionStateRecord struct {
+	AgentExecution     AgentExecution
 	Interruptions      []Interruption
 	ActiveInterruption *Interruption
 	Observations       []Observation
@@ -160,7 +160,7 @@ type RunStateRecord struct {
 
 type StepRecord struct {
 	ID            string
-	RunID         string
+	ExecutionID   string
 	StepOrder     int
 	ToolID        string
 	InputSummary  json.RawMessage
@@ -190,10 +190,10 @@ type Observation struct {
 }
 
 type ToolInputEnvelope struct {
-	RunID   string         `json:"run_id"`
-	StepID  string         `json:"step_id"`
-	Inputs  map[string]any `json:"inputs"`
-	Context map[string]any `json:"context"`
+	ExecutionID string         `json:"execution_id"`
+	StepID      string         `json:"step_id"`
+	Inputs      map[string]any `json:"inputs"`
+	Context     map[string]any `json:"context"`
 }
 
 type ToolResult struct {
@@ -223,10 +223,10 @@ type CreateChatMessageRequest struct {
 }
 
 type SubmitChatMessageResponse struct {
-	ChatID      string      `json:"chat_id"`
-	UserMessage ChatMessage `json:"user_message"`
-	RunID       string      `json:"run_id"`
-	Status      RunStatus   `json:"status"`
+	ChatID      string               `json:"chat_id"`
+	UserMessage ChatMessage          `json:"user_message"`
+	ExecutionID string               `json:"execution_id"`
+	Status      AgentExecutionStatus `json:"status"`
 }
 
 type CreateChatSessionRecord struct {
@@ -235,7 +235,7 @@ type CreateChatSessionRecord struct {
 
 type CreateChatMessageRecord struct {
 	SessionID   string
-	RunID       string
+	ExecutionID string
 	Role        ChatMessageRole
 	Content     string
 	Attachments []Attachment
@@ -252,7 +252,7 @@ type ChatSession struct {
 type ChatMessage struct {
 	ID          string            `json:"id"`
 	SessionID   string            `json:"session_id"`
-	RunID       string            `json:"run_id,omitempty"`
+	ExecutionID string            `json:"execution_id,omitempty"`
 	Role        ChatMessageRole   `json:"role"`
 	Content     string            `json:"content"`
 	Status      ChatMessageStatus `json:"status"`
@@ -264,9 +264,9 @@ type ChatMessage struct {
 }
 
 type ChatMessageResponse struct {
-	ChatID           string        `json:"chat_id"`
-	UserMessage      ChatMessage   `json:"user_message"`
-	AssistantMessage *ChatMessage  `json:"assistant_message,omitempty"`
-	Run              RunResponse   `json:"run"`
-	Interruption     *Interruption `json:"interruption,omitempty"`
+	ChatID           string                 `json:"chat_id"`
+	UserMessage      ChatMessage            `json:"user_message"`
+	AssistantMessage *ChatMessage           `json:"assistant_message,omitempty"`
+	AgentExecution   AgentExecutionResponse `json:"execution"`
+	Interruption     *Interruption          `json:"interruption,omitempty"`
 }

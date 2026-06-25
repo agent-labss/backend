@@ -20,13 +20,13 @@ const testToolID = "tool_1"
 func TestRepositoryPersistsRunAndStep(t *testing.T) {
 	repository := NewRepository(newTestDatabase(t))
 
-	run, err := repository.StartRun(context.Background(), CreateRunRecord{})
+	run, err := repository.StartAgentExecution(context.Background(), CreateAgentExecutionRecord{})
 	if err != nil {
-		t.Fatalf("StartRun() error = %v, want nil", err)
+		t.Fatalf("StartAgentExecution() error = %v, want nil", err)
 	}
 
 	err = repository.SaveStep(context.Background(), StepRecord{
-		RunID:         run.ID,
+		ExecutionID:   run.ID,
 		StepOrder:     1,
 		ToolID:        testToolID,
 		InputSummary:  []byte(`{}`),
@@ -37,17 +37,17 @@ func TestRepositoryPersistsRunAndStep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveStep() error = %v, want nil", err)
 	}
-	var step database.AgentRunStep
-	if err := repository.database.WithContext(context.Background()).Where("run_id = ?", run.ID).First(&step).Error; err != nil {
+	var step database.AgentExecutionStep
+	if err := repository.database.WithContext(context.Background()).Where("execution_id = ?", run.ID).First(&step).Error; err != nil {
 		t.Fatalf("load saved step error = %v", err)
 	}
 	if step.ToolID != testToolID {
 		t.Fatalf("saved step ToolID = %q, want %s", step.ToolID, testToolID)
 	}
 
-	run.Status = RunStatusSucceeded
-	if err := repository.FinishRun(context.Background(), run); err != nil {
-		t.Fatalf("FinishRun() error = %v, want nil", err)
+	run.Status = AgentExecutionStatusSucceeded
+	if err := repository.FinishAgentExecution(context.Background(), run); err != nil {
+		t.Fatalf("FinishAgentExecution() error = %v, want nil", err)
 	}
 }
 
@@ -75,18 +75,18 @@ func TestRepositoryPersistsChatSessionMessagesAttachmentsAndRunLink(t *testing.T
 	if err != nil {
 		t.Fatalf("CreateChatMessage(user) error = %v, want nil", err)
 	}
-	run, err := repository.StartRun(context.Background(), CreateRunRecord{
+	run, err := repository.StartAgentExecution(context.Background(), CreateAgentExecutionRecord{
 		SessionID:        session.ID,
 		TriggerMessageID: userMessage.ID,
 	})
 	if err != nil {
-		t.Fatalf("StartRun() error = %v, want nil", err)
+		t.Fatalf("StartAgentExecution() error = %v, want nil", err)
 	}
 	assistantMessage, err := repository.CreateChatMessage(context.Background(), CreateChatMessageRecord{
-		SessionID: session.ID,
-		RunID:     run.ID,
-		Role:      ChatMessageRoleAssistant,
-		Content:   testRunAnswer,
+		SessionID:   session.ID,
+		ExecutionID: run.ID,
+		Role:        ChatMessageRoleAssistant,
+		Content:     testRunAnswer,
 	})
 	if err != nil {
 		t.Fatalf("CreateChatMessage(assistant) error = %v, want nil", err)
@@ -102,7 +102,7 @@ func TestRepositoryPersistsChatSessionMessagesAttachmentsAndRunLink(t *testing.T
 	if messages[0].ID != userMessage.ID || messages[0].Sequence != 1 || len(messages[0].Attachments) != 1 {
 		t.Fatalf("first message = %#v, want user sequence 1 with attachment", messages[0])
 	}
-	if messages[1].ID != assistantMessage.ID || messages[1].RunID != run.ID || messages[1].Sequence != 2 {
+	if messages[1].ID != assistantMessage.ID || messages[1].ExecutionID != run.ID || messages[1].Sequence != 2 {
 		t.Fatalf("second message = %#v, want assistant linked to run sequence 2", messages[1])
 	}
 }
@@ -142,8 +142,8 @@ func TestRepositoryReturnsNotFoundForMissingChatSessionAndRun(t *testing.T) {
 	if _, err := repository.GetChatSession(context.Background(), "chat_missing"); !errors.Is(err, ErrChatSessionNotFound) {
 		t.Fatalf("GetChatSession() error = %v, want ErrChatSessionNotFound", err)
 	}
-	if _, err := repository.GetRunState(context.Background(), "run_missing"); !errors.Is(err, ErrRunNotFound) {
-		t.Fatalf("GetRunState() error = %v, want ErrRunNotFound", err)
+	if _, err := repository.GetAgentExecutionState(context.Background(), "exec_missing"); !errors.Is(err, ErrAgentExecutionNotFound) {
+		t.Fatalf("GetAgentExecutionState() error = %v, want ErrAgentExecutionNotFound", err)
 	}
 }
 
@@ -162,37 +162,37 @@ func TestRepositoryPersistsAndResolvesInterruption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChatMessage(user) error = %v", err)
 	}
-	run, err := repository.StartRun(context.Background(), CreateRunRecord{
+	run, err := repository.StartAgentExecution(context.Background(), CreateAgentExecutionRecord{
 		SessionID:        session.ID,
 		TriggerMessageID: userMessage.ID,
 	})
 	if err != nil {
-		t.Fatalf("StartRun() error = %v", err)
+		t.Fatalf("StartAgentExecution() error = %v", err)
 	}
 	interruption := Interruption{
-		SessionID: session.ID,
-		RunID:     run.ID,
-		Type:      InterruptionTypeApproval,
-		Status:    InterruptionStatusAwaitingReview,
-		Message:   "Delete the duplicate account?",
-		Payload:   json.RawMessage(`{"risk":"destructive"}`),
+		SessionID:   session.ID,
+		ExecutionID: run.ID,
+		Type:        InterruptionTypeApproval,
+		Status:      InterruptionStatusAwaitingReview,
+		Message:     "Delete the duplicate account?",
+		Payload:     json.RawMessage(`{"risk":"destructive"}`),
 	}
 
 	saved, err := repository.CreateInterruption(context.Background(), interruption)
 	if err != nil {
 		t.Fatalf("CreateInterruption() error = %v", err)
 	}
-	run.Status = RunStatusInterrupted
-	if err := repository.MarkRunInterrupted(context.Background(), run, saved); err != nil {
-		t.Fatalf("MarkRunInterrupted() error = %v", err)
+	run.Status = AgentExecutionStatusInterrupted
+	if err := repository.MarkAgentExecutionInterrupted(context.Background(), run, saved); err != nil {
+		t.Fatalf("MarkAgentExecutionInterrupted() error = %v", err)
 	}
 
-	loaded, err := repository.GetRunState(context.Background(), run.ID)
+	loaded, err := repository.GetAgentExecutionState(context.Background(), run.ID)
 	if err != nil {
-		t.Fatalf("GetRunState() error = %v", err)
+		t.Fatalf("GetAgentExecutionState() error = %v", err)
 	}
-	if loaded.Run.Status != RunStatusInterrupted {
-		t.Fatalf("Status = %q, want interrupted", loaded.Run.Status)
+	if loaded.AgentExecution.Status != AgentExecutionStatusInterrupted {
+		t.Fatalf("Status = %q, want interrupted", loaded.AgentExecution.Status)
 	}
 	if loaded.ActiveInterruption == nil || loaded.ActiveInterruption.Message != "Delete the duplicate account?" {
 		t.Fatalf("ActiveInterruption = %#v, want active interruption", loaded.ActiveInterruption)

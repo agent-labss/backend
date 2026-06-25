@@ -23,9 +23,9 @@ type AgentInstructionQueries interface {
 	UpsertByID(id int, content string, updatedAt time.Time) error
 }
 
-type AgentRunQueries interface {
+type AgentExecutionQueries interface {
 	// SELECT * FROM @@table WHERE id = @id LIMIT 1
-	GetByID(id string) (database.AgentRun, error)
+	GetByID(id string) (database.AgentExecution, error)
 
 	// UPDATE @@table SET status = @status, error_summary = @errorSummary, finished_at = @finishedAt WHERE id = @id
 	FinishByID(status string, errorSummary string, finishedAt sql.NullTime, id string) error
@@ -34,9 +34,9 @@ type AgentRunQueries interface {
 	MarkInterruptedByID(status string, id string) error
 }
 
-type AgentRunStepQueries interface {
+type AgentExecutionStepQueries interface {
 	// SELECT * FROM @@table WHERE id = @id LIMIT 1
-	GetByID(id string) (database.AgentRunStep, error)
+	GetByID(id string) (database.AgentExecutionStep, error)
 }
 
 type ChatSessionQueries interface {
@@ -61,8 +61,8 @@ type ChatAttachmentQueries interface {
 }
 
 type AgentInterruptionQueries interface {
-	// SELECT * FROM @@table WHERE run_id = @runID ORDER BY created_at ASC
-	ListByRunID(runID string) ([]database.AgentInterruption, error)
+	// SELECT * FROM @@table WHERE execution_id = @executionID ORDER BY created_at ASC
+	ListByExecutionID(executionID string) ([]database.AgentInterruption, error)
 
 	// SELECT * FROM @@table WHERE session_id = @sessionID AND status = @status ORDER BY created_at DESC LIMIT 1
 	ActiveBySessionID(sessionID string, status string) (database.AgentInterruption, error)
@@ -71,7 +71,7 @@ type AgentInterruptionQueries interface {
 	ResolveAwaitingByID(status string, messageID string, resolvedAt sql.NullTime, id string, awaitingStatus string) error
 }
 
-type AgentRunObservationQueries interface {
-	// SELECT * FROM @@table WHERE run_id = @runID ORDER BY step_order ASC, created_at ASC
-	ListByRunID(runID string) ([]database.AgentRunObservation, error)
+type AgentExecutionObservationQueries interface {
+	// SELECT * FROM @@table WHERE execution_id = @executionID ORDER BY step_order ASC, created_at ASC
+	ListByExecutionID(executionID string) ([]database.AgentExecutionObservation, error)
 }

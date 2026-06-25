@@ -7,30 +7,30 @@ const defaultEventBusBuffer = 16
 const (
 	EventTypeConnected            ChatEventType = "connected"
 	EventTypeMessageCreated       ChatEventType = "message.created"
-	EventTypeRunStarted           ChatEventType = "run.started"
-	EventTypeRunResumed           ChatEventType = "run.resumed"
+	EventTypeExecutionStarted     ChatEventType = "execution.started"
+	EventTypeExecutionResumed     ChatEventType = "execution.resumed"
 	EventTypeToolStarted          ChatEventType = "tool.started"
 	EventTypeToolFinished         ChatEventType = "tool.finished"
 	EventTypeInterruptionCreated  ChatEventType = "interruption.created"
 	EventTypeInterruptionResolved ChatEventType = "interruption.resolved"
-	EventTypeRunCompleted         ChatEventType = "run.completed"
-	EventTypeRunFailed            ChatEventType = "run.failed"
+	EventTypeExecutionCompleted   ChatEventType = "execution.completed"
+	EventTypeExecutionFailed      ChatEventType = "execution.failed"
 )
 
 type ChatEventType string
 
 type ChatEvent struct {
-	Type           ChatEventType `json:"type"`
-	ChatID         string        `json:"chat_id"`
-	MessageID      string        `json:"message_id,omitempty"`
-	RunID          string        `json:"run_id,omitempty"`
-	ToolName       string        `json:"tool_name,omitempty"`
-	InterruptionID string        `json:"interruption_id,omitempty"`
-	Message        *ChatMessage  `json:"message,omitempty"`
-	Run            *RunResponse  `json:"run,omitempty"`
-	Interruption   *Interruption `json:"interruption,omitempty"`
-	Observation    *Observation  `json:"observation,omitempty"`
-	Error          string        `json:"error,omitempty"`
+	Type           ChatEventType           `json:"type"`
+	ChatID         string                  `json:"chat_id"`
+	MessageID      string                  `json:"message_id,omitempty"`
+	ExecutionID    string                  `json:"execution_id,omitempty"`
+	ToolName       string                  `json:"tool_name,omitempty"`
+	InterruptionID string                  `json:"interruption_id,omitempty"`
+	Message        *ChatMessage            `json:"message,omitempty"`
+	AgentExecution *AgentExecutionResponse `json:"execution,omitempty"`
+	Interruption   *Interruption           `json:"interruption,omitempty"`
+	Observation    *Observation            `json:"observation,omitempty"`
+	Error          string                  `json:"error,omitempty"`
 }
 
 type EventBus struct {

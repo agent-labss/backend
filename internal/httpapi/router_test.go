@@ -94,8 +94,8 @@ func TestToolRoutesAreRegistered(t *testing.T) {
 
 func TestLegacyAgentRunRoutesAreNotRegistered(t *testing.T) {
 	assertRouteStatus(t, http.MethodPost, "/api/agent/runs", http.StatusNotFound)
-	assertRouteStatus(t, http.MethodGet, "/api/agent/runs/run_test", http.StatusNotFound)
-	assertRouteStatus(t, http.MethodPost, "/api/agent/runs/run_test/turns", http.StatusNotFound)
+	assertRouteStatus(t, http.MethodGet, "/api/agent/runs/exec_test", http.StatusNotFound)
+	assertRouteStatus(t, http.MethodPost, "/api/agent/runs/exec_test/turns", http.StatusNotFound)
 }
 
 func TestRouterConfigDoesNotExposeLegacyAgentHandler(t *testing.T) {

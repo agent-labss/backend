@@ -5,7 +5,7 @@ import "testing"
 const testContextReference = "ctx://step_1/login/session"
 
 func TestRunContextStoresSensitiveValuesAsReferences(t *testing.T) {
-	ctx := NewRunContext()
+	ctx := NewExecutionContext()
 
 	ref := ctx.Store("step_1", "login", "session", "cookie-value")
 
@@ -23,7 +23,7 @@ func TestRunContextStoresSensitiveValuesAsReferences(t *testing.T) {
 }
 
 func TestRunContextReferencesIncludeStepID(t *testing.T) {
-	ctx := NewRunContext()
+	ctx := NewExecutionContext()
 
 	firstRef := ctx.Store("step_1", "login", "session", "first-cookie")
 	secondRef := ctx.Store("step_2", "login", "session", "second-cookie")
@@ -43,7 +43,7 @@ func TestRunContextReferencesIncludeStepID(t *testing.T) {
 }
 
 func TestRunContextResolveLeavesPlainValuesUnresolved(t *testing.T) {
-	ctx := NewRunContext()
+	ctx := NewExecutionContext()
 
 	_, ok := ctx.Resolve("plain-value")
 

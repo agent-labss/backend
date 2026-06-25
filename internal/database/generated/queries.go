@@ -92,36 +92,36 @@ func (e _AgentInstructionQueriesImpl[T]) UpsertByID(ctx context.Context, id int,
 	return e.Exec(ctx, sb.String(), _params...)
 }
 
-func AgentRunQueries[T any](db *gorm.DB, opts ...clause.Expression) _AgentRunQueriesInterface[T] {
-	return _AgentRunQueriesImpl[T]{
+func AgentExecutionQueries[T any](db *gorm.DB, opts ...clause.Expression) _AgentExecutionQueriesInterface[T] {
+	return _AgentExecutionQueriesImpl[T]{
 		Interface: typed.G[T](db, opts...),
 	}
 }
 
-type _AgentRunQueriesInterface[T any] interface {
+type _AgentExecutionQueriesInterface[T any] interface {
 	typed.Interface[T]
-	GetByID(ctx context.Context, id string) (database.AgentRun, error)
+	GetByID(ctx context.Context, id string) (database.AgentExecution, error)
 	FinishByID(ctx context.Context, status string, errorSummary string, finishedAt sql.NullTime, id string) error
 	MarkInterruptedByID(ctx context.Context, status string, id string) error
 }
 
-type _AgentRunQueriesImpl[T any] struct {
+type _AgentExecutionQueriesImpl[T any] struct {
 	typed.Interface[T]
 }
 
-func (e _AgentRunQueriesImpl[T]) GetByID(ctx context.Context, id string) (database.AgentRun, error) {
+func (e _AgentExecutionQueriesImpl[T]) GetByID(ctx context.Context, id string) (database.AgentExecution, error) {
 	var sb strings.Builder
 	_params := make([]any, 0, 2)
 
 	sb.WriteString("SELECT * FROM ? WHERE id = ? LIMIT 1")
 	_params = append(_params, clause.Table{Name: clause.CurrentTable}, id)
 
-	var result database.AgentRun
+	var result database.AgentExecution
 	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
 	return result, err
 }
 
-func (e _AgentRunQueriesImpl[T]) FinishByID(ctx context.Context, status string, errorSummary string, finishedAt sql.NullTime, id string) error {
+func (e _AgentExecutionQueriesImpl[T]) FinishByID(ctx context.Context, status string, errorSummary string, finishedAt sql.NullTime, id string) error {
 	var sb strings.Builder
 	_params := make([]any, 0, 5)
 
@@ -131,7 +131,7 @@ func (e _AgentRunQueriesImpl[T]) FinishByID(ctx context.Context, status string, 
 	return e.Exec(ctx, sb.String(), _params...)
 }
 
-func (e _AgentRunQueriesImpl[T]) MarkInterruptedByID(ctx context.Context, status string, id string) error {
+func (e _AgentExecutionQueriesImpl[T]) MarkInterruptedByID(ctx context.Context, status string, id string) error {
 	var sb strings.Builder
 	_params := make([]any, 0, 3)
 
@@ -141,29 +141,29 @@ func (e _AgentRunQueriesImpl[T]) MarkInterruptedByID(ctx context.Context, status
 	return e.Exec(ctx, sb.String(), _params...)
 }
 
-func AgentRunStepQueries[T any](db *gorm.DB, opts ...clause.Expression) _AgentRunStepQueriesInterface[T] {
-	return _AgentRunStepQueriesImpl[T]{
+func AgentExecutionStepQueries[T any](db *gorm.DB, opts ...clause.Expression) _AgentExecutionStepQueriesInterface[T] {
+	return _AgentExecutionStepQueriesImpl[T]{
 		Interface: typed.G[T](db, opts...),
 	}
 }
 
-type _AgentRunStepQueriesInterface[T any] interface {
+type _AgentExecutionStepQueriesInterface[T any] interface {
 	typed.Interface[T]
-	GetByID(ctx context.Context, id string) (database.AgentRunStep, error)
+	GetByID(ctx context.Context, id string) (database.AgentExecutionStep, error)
 }
 
-type _AgentRunStepQueriesImpl[T any] struct {
+type _AgentExecutionStepQueriesImpl[T any] struct {
 	typed.Interface[T]
 }
 
-func (e _AgentRunStepQueriesImpl[T]) GetByID(ctx context.Context, id string) (database.AgentRunStep, error) {
+func (e _AgentExecutionStepQueriesImpl[T]) GetByID(ctx context.Context, id string) (database.AgentExecutionStep, error) {
 	var sb strings.Builder
 	_params := make([]any, 0, 2)
 
 	sb.WriteString("SELECT * FROM ? WHERE id = ? LIMIT 1")
 	_params = append(_params, clause.Table{Name: clause.CurrentTable}, id)
 
-	var result database.AgentRunStep
+	var result database.AgentExecutionStep
 	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
 	return result, err
 }
@@ -281,7 +281,7 @@ func AgentInterruptionQueries[T any](db *gorm.DB, opts ...clause.Expression) _Ag
 
 type _AgentInterruptionQueriesInterface[T any] interface {
 	typed.Interface[T]
-	ListByRunID(ctx context.Context, runID string) ([]database.AgentInterruption, error)
+	ListByExecutionID(ctx context.Context, executionID string) ([]database.AgentInterruption, error)
 	ActiveBySessionID(ctx context.Context, sessionID string, status string) (database.AgentInterruption, error)
 	ResolveAwaitingByID(ctx context.Context, status string, messageID string, resolvedAt sql.NullTime, id string, awaitingStatus string) error
 }
@@ -290,12 +290,12 @@ type _AgentInterruptionQueriesImpl[T any] struct {
 	typed.Interface[T]
 }
 
-func (e _AgentInterruptionQueriesImpl[T]) ListByRunID(ctx context.Context, runID string) ([]database.AgentInterruption, error) {
+func (e _AgentInterruptionQueriesImpl[T]) ListByExecutionID(ctx context.Context, executionID string) ([]database.AgentInterruption, error) {
 	var sb strings.Builder
 	_params := make([]any, 0, 2)
 
-	sb.WriteString("SELECT * FROM ? WHERE run_id = ? ORDER BY created_at ASC")
-	_params = append(_params, clause.Table{Name: clause.CurrentTable}, runID)
+	sb.WriteString("SELECT * FROM ? WHERE execution_id = ? ORDER BY created_at ASC")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, executionID)
 
 	var result []database.AgentInterruption
 	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
@@ -324,29 +324,29 @@ func (e _AgentInterruptionQueriesImpl[T]) ResolveAwaitingByID(ctx context.Contex
 	return e.Exec(ctx, sb.String(), _params...)
 }
 
-func AgentRunObservationQueries[T any](db *gorm.DB, opts ...clause.Expression) _AgentRunObservationQueriesInterface[T] {
-	return _AgentRunObservationQueriesImpl[T]{
+func AgentExecutionObservationQueries[T any](db *gorm.DB, opts ...clause.Expression) _AgentExecutionObservationQueriesInterface[T] {
+	return _AgentExecutionObservationQueriesImpl[T]{
 		Interface: typed.G[T](db, opts...),
 	}
 }
 
-type _AgentRunObservationQueriesInterface[T any] interface {
+type _AgentExecutionObservationQueriesInterface[T any] interface {
 	typed.Interface[T]
-	ListByRunID(ctx context.Context, runID string) ([]database.AgentRunObservation, error)
+	ListByExecutionID(ctx context.Context, executionID string) ([]database.AgentExecutionObservation, error)
 }
 
-type _AgentRunObservationQueriesImpl[T any] struct {
+type _AgentExecutionObservationQueriesImpl[T any] struct {
 	typed.Interface[T]
 }
 
-func (e _AgentRunObservationQueriesImpl[T]) ListByRunID(ctx context.Context, runID string) ([]database.AgentRunObservation, error) {
+func (e _AgentExecutionObservationQueriesImpl[T]) ListByExecutionID(ctx context.Context, executionID string) ([]database.AgentExecutionObservation, error) {
 	var sb strings.Builder
 	_params := make([]any, 0, 2)
 
-	sb.WriteString("SELECT * FROM ? WHERE run_id = ? ORDER BY step_order ASC, created_at ASC")
-	_params = append(_params, clause.Table{Name: clause.CurrentTable}, runID)
+	sb.WriteString("SELECT * FROM ? WHERE execution_id = ? ORDER BY step_order ASC, created_at ASC")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, executionID)
 
-	var result []database.AgentRunObservation
+	var result []database.AgentExecutionObservation
 	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
 	return result, err
 }

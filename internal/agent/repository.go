@@ -15,11 +15,11 @@ import (
 )
 
 var (
-	ErrDatabaseMissing      = errors.New("agent database is missing")
-	ErrRunNotFound          = errors.New("agent run not found")
-	ErrRunNotWaiting        = errors.New("agent run is not waiting for user")
-	ErrChatSessionNotFound  = errors.New("chat session not found")
-	ErrNoActiveInterruption = errors.New("active interruption not found")
+	ErrDatabaseMissing          = errors.New("agent database is missing")
+	ErrAgentExecutionNotFound   = errors.New("agent execution not found")
+	ErrAgentExecutionNotWaiting = errors.New("agent execution is not waiting for user")
+	ErrChatSessionNotFound      = errors.New("chat session not found")
+	ErrNoActiveInterruption     = errors.New("active interruption not found")
 )
 
 type Repository struct {
@@ -34,31 +34,31 @@ func NewRepository(db *gorm.DB) Repository {
 	return Repository{database: db}
 }
 
-func (repository Repository) StartRun(ctx context.Context, record CreateRunRecord) (Run, error) {
+func (repository Repository) StartAgentExecution(ctx context.Context, record CreateAgentExecutionRecord) (AgentExecution, error) {
 	if repository.database == nil {
-		return Run{}, ErrDatabaseMissing
+		return AgentExecution{}, ErrDatabaseMissing
 	}
 
-	run := Run{
-		ID:               newRuntimeID("run"),
+	execution := AgentExecution{
+		ID:               newRuntimeID("exec"),
 		SessionID:        record.SessionID,
 		TriggerMessageID: record.TriggerMessageID,
-		Status:           RunStatusRunning,
+		Status:           AgentExecutionStatusRunning,
 		StartedAt:        time.Now().UTC(),
 	}
-	runRecord := database.AgentRun{
-		ID:               run.ID,
-		SessionID:        run.SessionID,
-		TriggerMessageID: run.TriggerMessageID,
-		Status:           string(run.Status),
+	executionRecord := database.AgentExecution{
+		ID:               execution.ID,
+		SessionID:        execution.SessionID,
+		TriggerMessageID: execution.TriggerMessageID,
+		Status:           string(execution.Status),
 		ErrorSummary:     "",
-		StartedAt:        run.StartedAt,
+		StartedAt:        execution.StartedAt,
 	}
-	if err := generated.AgentRunQueries[database.AgentRun](repository.database).Create(ctx, &runRecord); err != nil {
-		return Run{}, fmt.Errorf("start run: %w", err)
+	if err := generated.AgentExecutionQueries[database.AgentExecution](repository.database).Create(ctx, &executionRecord); err != nil {
+		return AgentExecution{}, fmt.Errorf("start execution: %w", err)
 	}
 
-	return run, nil
+	return execution, nil
 }
 
 func (repository Repository) CreateChatSession(ctx context.Context, record CreateChatSessionRecord) (ChatSession, error) {
@@ -145,7 +145,7 @@ func (repository Repository) CreateChatMessage(ctx context.Context, record Creat
 		message = ChatMessage{
 			ID:          newRuntimeID("msg"),
 			SessionID:   record.SessionID,
-			RunID:       record.RunID,
+			ExecutionID: record.ExecutionID,
 			Role:        record.Role,
 			Content:     RedactText(record.Content),
 			Status:      ChatMessageStatusCompleted,
@@ -157,7 +157,7 @@ func (repository Repository) CreateChatMessage(ctx context.Context, record Creat
 		messageRecord := database.ChatMessage{
 			ID:          message.ID,
 			SessionID:   message.SessionID,
-			RunID:       message.RunID,
+			ExecutionID: message.ExecutionID,
 			Role:        string(message.Role),
 			Content:     message.Content,
 			Status:      string(message.Status),
@@ -200,58 +200,58 @@ func saveChatAttachments(ctx context.Context, db *gorm.DB, message ChatMessage, 
 	return nil
 }
 
-func (repository Repository) FinishRun(ctx context.Context, run Run) error {
+func (repository Repository) FinishAgentExecution(ctx context.Context, execution AgentExecution) error {
 	if repository.database == nil {
 		return ErrDatabaseMissing
 	}
 
-	if err := generated.AgentRunQueries[database.AgentRun](repository.database).FinishByID(ctx, string(run.Status), RedactText(run.ErrorSummary), sql.NullTime{Time: time.Now().UTC(), Valid: true}, run.ID); err != nil {
-		return fmt.Errorf("finish run: %w", err)
+	if err := generated.AgentExecutionQueries[database.AgentExecution](repository.database).FinishByID(ctx, string(execution.Status), RedactText(execution.ErrorSummary), sql.NullTime{Time: time.Now().UTC(), Valid: true}, execution.ID); err != nil {
+		return fmt.Errorf("finish execution: %w", err)
 	}
 
 	return nil
 }
 
-func (repository Repository) GetRunState(ctx context.Context, runID string) (RunStateRecord, error) {
+func (repository Repository) GetAgentExecutionState(ctx context.Context, executionID string) (AgentExecutionStateRecord, error) {
 	if repository.database == nil {
-		return RunStateRecord{}, ErrDatabaseMissing
+		return AgentExecutionStateRecord{}, ErrDatabaseMissing
 	}
 
-	runRecord, err := repository.runRecord(ctx, runID)
+	executionRecord, err := repository.executionRecord(ctx, executionID)
 	if err != nil {
-		return RunStateRecord{}, err
+		return AgentExecutionStateRecord{}, err
 	}
-	state := RunStateRecord{Run: runFromRecord(runRecord)}
-	if err := repository.loadRunStateRelations(ctx, &state); err != nil {
-		return RunStateRecord{}, err
+	state := AgentExecutionStateRecord{AgentExecution: agentExecutionFromRecord(executionRecord)}
+	if err := repository.loadExecutionStateRelations(ctx, &state); err != nil {
+		return AgentExecutionStateRecord{}, err
 	}
 
 	return state, nil
 }
 
-func (repository Repository) runRecord(ctx context.Context, runID string) (database.AgentRun, error) {
-	runRecord, err := generated.AgentRunQueries[database.AgentRun](repository.database).GetByID(ctx, runID)
+func (repository Repository) executionRecord(ctx context.Context, executionID string) (database.AgentExecution, error) {
+	executionRecord, err := generated.AgentExecutionQueries[database.AgentExecution](repository.database).GetByID(ctx, executionID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return database.AgentRun{}, ErrRunNotFound
+			return database.AgentExecution{}, ErrAgentExecutionNotFound
 		}
-		return database.AgentRun{}, fmt.Errorf("get run: %w", err)
+		return database.AgentExecution{}, fmt.Errorf("get execution: %w", err)
 	}
-	if runRecord.ID == "" {
-		return database.AgentRun{}, ErrRunNotFound
+	if executionRecord.ID == "" {
+		return database.AgentExecution{}, ErrAgentExecutionNotFound
 	}
-	return runRecord, nil
+	return executionRecord, nil
 }
 
-func (repository Repository) loadRunStateRelations(ctx context.Context, state *RunStateRecord) error {
-	interruptions, activeInterruption, err := repository.runInterruptions(ctx, state.Run.ID)
+func (repository Repository) loadExecutionStateRelations(ctx context.Context, state *AgentExecutionStateRecord) error {
+	interruptions, activeInterruption, err := repository.executionInterruptions(ctx, state.AgentExecution.ID)
 	if err != nil {
 		return err
 	}
 	state.Interruptions = interruptions
 	state.ActiveInterruption = activeInterruption
 
-	observations, err := repository.runObservations(ctx, state.Run.ID)
+	observations, err := repository.executionObservations(ctx, state.AgentExecution.ID)
 	if err != nil {
 		return err
 	}
@@ -283,14 +283,14 @@ func (repository Repository) CreateInterruption(ctx context.Context, interruptio
 	}
 
 	record := database.AgentInterruption{
-		ID:        interruption.ID,
-		SessionID: interruption.SessionID,
-		RunID:     interruption.RunID,
-		Type:      string(interruption.Type),
-		Status:    string(interruption.Status),
-		Message:   interruption.Message,
-		Payload:   database.JSON(payload),
-		CreatedAt: now,
+		ID:          interruption.ID,
+		SessionID:   interruption.SessionID,
+		ExecutionID: interruption.ExecutionID,
+		Type:        string(interruption.Type),
+		Status:      string(interruption.Status),
+		Message:     interruption.Message,
+		Payload:     database.JSON(payload),
+		CreatedAt:   now,
 	}
 	if err := generated.AgentInterruptionQueries[database.AgentInterruption](repository.database).Create(ctx, &record); err != nil {
 		return Interruption{}, fmt.Errorf("create interruption: %w", err)
@@ -299,13 +299,13 @@ func (repository Repository) CreateInterruption(ctx context.Context, interruptio
 	return interruption, nil
 }
 
-func (repository Repository) MarkRunInterrupted(ctx context.Context, run Run, _ Interruption) error {
+func (repository Repository) MarkAgentExecutionInterrupted(ctx context.Context, execution AgentExecution, _ Interruption) error {
 	if repository.database == nil {
 		return ErrDatabaseMissing
 	}
 
-	if err := generated.AgentRunQueries[database.AgentRun](repository.database).MarkInterruptedByID(ctx, string(RunStatusInterrupted), run.ID); err != nil {
-		return fmt.Errorf("mark run interrupted: %w", err)
+	if err := generated.AgentExecutionQueries[database.AgentExecution](repository.database).MarkInterruptedByID(ctx, string(AgentExecutionStatusInterrupted), execution.ID); err != nil {
+		return fmt.Errorf("mark execution interrupted: %w", err)
 	}
 
 	return nil
@@ -354,14 +354,14 @@ func (repository Repository) SaveObservation(ctx context.Context, record Observa
 	if err != nil {
 		return fmt.Errorf("marshal observation: %w", err)
 	}
-	observationRecord := database.AgentRunObservation{
-		ID:        newRuntimeID("obs"),
-		RunID:     record.RunID,
-		StepOrder: record.StepOrder,
-		Payload:   database.JSON(payload),
-		CreatedAt: time.Now().UTC(),
+	observationRecord := database.AgentExecutionObservation{
+		ID:          newRuntimeID("obs"),
+		ExecutionID: record.ExecutionID,
+		StepOrder:   record.StepOrder,
+		Payload:     database.JSON(payload),
+		CreatedAt:   time.Now().UTC(),
 	}
-	if err := generated.AgentRunObservationQueries[database.AgentRunObservation](repository.database).Create(ctx, &observationRecord); err != nil {
+	if err := generated.AgentExecutionObservationQueries[database.AgentExecutionObservation](repository.database).Create(ctx, &observationRecord); err != nil {
 		return fmt.Errorf("save observation: %w", err)
 	}
 
@@ -373,9 +373,9 @@ func (repository Repository) SaveStep(ctx context.Context, step StepRecord) erro
 		return ErrDatabaseMissing
 	}
 
-	record := database.AgentRunStep{
+	record := database.AgentExecutionStep{
 		ID:            newRuntimeID("step"),
-		RunID:         step.RunID,
+		ExecutionID:   step.ExecutionID,
 		StepOrder:     step.StepOrder,
 		ToolID:        step.ToolID,
 		InputSummary:  database.JSON(step.InputSummary),
@@ -385,7 +385,7 @@ func (repository Repository) SaveStep(ctx context.Context, step StepRecord) erro
 		ErrorSummary:  RedactText(step.ErrorSummary),
 		CreatedAt:     time.Now().UTC(),
 	}
-	if err := generated.AgentRunStepQueries[database.AgentRunStep](repository.database).Create(ctx, &record); err != nil {
+	if err := generated.AgentExecutionStepQueries[database.AgentExecutionStep](repository.database).Create(ctx, &record); err != nil {
 		return fmt.Errorf("save step: %w", err)
 	}
 
@@ -411,10 +411,10 @@ func (repository Repository) chatAttachments(ctx context.Context, sessionID stri
 	return attachments, nil
 }
 
-func (repository Repository) runInterruptions(ctx context.Context, runID string) ([]Interruption, *Interruption, error) {
-	records, err := generated.AgentInterruptionQueries[database.AgentInterruption](repository.database).ListByRunID(ctx, runID)
+func (repository Repository) executionInterruptions(ctx context.Context, executionID string) ([]Interruption, *Interruption, error) {
+	records, err := generated.AgentInterruptionQueries[database.AgentInterruption](repository.database).ListByExecutionID(ctx, executionID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("list run interruptions: %w", err)
+		return nil, nil, fmt.Errorf("list execution interruptions: %w", err)
 	}
 	interruptions := make([]Interruption, 0, len(records))
 	var active *Interruption
@@ -429,8 +429,8 @@ func (repository Repository) runInterruptions(ctx context.Context, runID string)
 	return interruptions, active, nil
 }
 
-func (repository Repository) runObservations(ctx context.Context, runID string) ([]Observation, error) {
-	records, err := generated.AgentRunObservationQueries[database.AgentRunObservation](repository.database).ListByRunID(ctx, runID)
+func (repository Repository) executionObservations(ctx context.Context, executionID string) ([]Observation, error) {
+	records, err := generated.AgentExecutionObservationQueries[database.AgentExecutionObservation](repository.database).ListByExecutionID(ctx, executionID)
 	if err != nil {
 		return nil, fmt.Errorf("list observations: %w", err)
 	}
@@ -445,19 +445,19 @@ func (repository Repository) runObservations(ctx context.Context, runID string) 
 	return observations, nil
 }
 
-func runFromRecord(record database.AgentRun) Run {
-	run := Run{
+func agentExecutionFromRecord(record database.AgentExecution) AgentExecution {
+	execution := AgentExecution{
 		ID:               record.ID,
 		SessionID:        record.SessionID,
 		TriggerMessageID: record.TriggerMessageID,
-		Status:           RunStatus(record.Status),
+		Status:           AgentExecutionStatus(record.Status),
 		ErrorSummary:     record.ErrorSummary,
 		StartedAt:        record.StartedAt,
 	}
 	if record.FinishedAt.Valid {
-		run.FinishedAt = record.FinishedAt.Time
+		execution.FinishedAt = record.FinishedAt.Time
 	}
-	return run
+	return execution
 }
 
 func chatSessionFromRecord(record database.ChatSession) ChatSession {
@@ -472,15 +472,15 @@ func chatSessionFromRecord(record database.ChatSession) ChatSession {
 
 func chatMessageFromRecord(record database.ChatMessage) ChatMessage {
 	message := ChatMessage{
-		ID:        record.ID,
-		SessionID: record.SessionID,
-		RunID:     record.RunID,
-		Role:      ChatMessageRole(record.Role),
-		Content:   record.Content,
-		Status:    ChatMessageStatus(record.Status),
-		Sequence:  record.Sequence,
-		CreatedAt: record.CreatedAt,
-		Error:     record.ErrorSummary,
+		ID:          record.ID,
+		SessionID:   record.SessionID,
+		ExecutionID: record.ExecutionID,
+		Role:        ChatMessageRole(record.Role),
+		Content:     record.Content,
+		Status:      ChatMessageStatus(record.Status),
+		Sequence:    record.Sequence,
+		CreatedAt:   record.CreatedAt,
+		Error:       record.ErrorSummary,
 	}
 	if record.CompletedAt.Valid {
 		message.CompletedAt = record.CompletedAt.Time
@@ -490,14 +490,14 @@ func chatMessageFromRecord(record database.ChatMessage) ChatMessage {
 
 func interruptionFromRecord(record database.AgentInterruption) Interruption {
 	interruption := Interruption{
-		ID:        record.ID,
-		SessionID: record.SessionID,
-		RunID:     record.RunID,
-		Type:      InterruptionType(record.Type),
-		Status:    InterruptionStatus(record.Status),
-		Message:   record.Message,
-		Payload:   json.RawMessage(record.Payload),
-		CreatedAt: record.CreatedAt,
+		ID:          record.ID,
+		SessionID:   record.SessionID,
+		ExecutionID: record.ExecutionID,
+		Type:        InterruptionType(record.Type),
+		Status:      InterruptionStatus(record.Status),
+		Message:     record.Message,
+		Payload:     json.RawMessage(record.Payload),
+		CreatedAt:   record.CreatedAt,
 	}
 	if record.ResolvedAt.Valid {
 		interruption.RespondedAt = record.ResolvedAt.Time

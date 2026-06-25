@@ -247,8 +247,8 @@ func writeChatError(c fiber.Ctx, err error) error {
 	if errors.Is(err, ErrChatSessionNotFound) {
 		return c.Status(http.StatusNotFound).JSON(fiber.Map{errorField: ErrChatSessionNotFound.Error()})
 	}
-	if errors.Is(err, ErrRunNotFound) {
-		return c.Status(http.StatusNotFound).JSON(fiber.Map{errorField: ErrRunNotFound.Error()})
+	if errors.Is(err, ErrAgentExecutionNotFound) {
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{errorField: ErrAgentExecutionNotFound.Error()})
 	}
 
 	return c.Status(http.StatusInternalServerError).JSON(fiber.Map{errorField: "chat message failed"})

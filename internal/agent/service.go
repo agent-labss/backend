@@ -10,11 +10,11 @@ import (
 	"ai/backend/internal/toolcatalog"
 )
 
-var ErrRunFailed = errors.New("agent run failed")
+var ErrAgentExecutionFailed = errors.New("agent execution failed")
 
 var errAssistantMessageEmpty = errors.New("assistant message is empty")
 
-const defaultFailedRunFinishTimeout = 5 * time.Second
+const defaultFailedExecutionFinishTimeout = 5 * time.Second
 
 type Catalog interface {
 	ListEnabledTools(ctx context.Context) ([]toolcatalog.Tool, error)
@@ -26,73 +26,73 @@ type Executor interface {
 }
 
 type ServiceConfig struct {
-	Planner      Planner
-	Catalog      Catalog
-	Executor     Executor
-	RunStore     RunStore
-	MaxSteps     int
-	TotalTimeout time.Duration
-	EventBus     *EventBus
-	Schedule     RunScheduler
+	Planner             Planner
+	Catalog             Catalog
+	Executor            Executor
+	AgentExecutionStore AgentExecutionStore
+	MaxSteps            int
+	TotalTimeout        time.Duration
+	EventBus            *EventBus
+	Schedule            AgentExecutionScheduler
 }
 
-type RunScheduler func(task func())
+type AgentExecutionScheduler func(task func(context.Context))
 
-type RunStore struct {
-	startRun            func(ctx context.Context, record CreateRunRecord) (Run, error)
-	getRunState         func(ctx context.Context, runID string) (RunStateRecord, error)
-	finishRun           func(ctx context.Context, run Run) error
-	saveStep            func(ctx context.Context, step StepRecord) error
-	createInterruption  func(ctx context.Context, interruption Interruption) (Interruption, error)
-	markRunInterrupted  func(ctx context.Context, run Run, interruption Interruption) error
-	resolveInterruption func(ctx context.Context, interruptionID string, messageID string, status InterruptionStatus) error
-	saveObservation     func(ctx context.Context, record ObservationRecord) error
-	createChatSession   func(ctx context.Context, record CreateChatSessionRecord) (ChatSession, error)
-	getChatSession      func(ctx context.Context, sessionID string) (ChatSession, error)
-	listChatMessages    func(ctx context.Context, sessionID string) ([]ChatMessage, error)
-	createChatMessage   func(ctx context.Context, record CreateChatMessageRecord) (ChatMessage, error)
-	activeInterruption  func(ctx context.Context, sessionID string) (*Interruption, error)
+type AgentExecutionStore struct {
+	startExecution           func(ctx context.Context, record CreateAgentExecutionRecord) (AgentExecution, error)
+	getExecutionState        func(ctx context.Context, executionID string) (AgentExecutionStateRecord, error)
+	finishExecution          func(ctx context.Context, execution AgentExecution) error
+	saveStep                 func(ctx context.Context, step StepRecord) error
+	createInterruption       func(ctx context.Context, interruption Interruption) (Interruption, error)
+	markExecutionInterrupted func(ctx context.Context, execution AgentExecution, interruption Interruption) error
+	resolveInterruption      func(ctx context.Context, interruptionID string, messageID string, status InterruptionStatus) error
+	saveObservation          func(ctx context.Context, record ObservationRecord) error
+	createChatSession        func(ctx context.Context, record CreateChatSessionRecord) (ChatSession, error)
+	getChatSession           func(ctx context.Context, sessionID string) (ChatSession, error)
+	listChatMessages         func(ctx context.Context, sessionID string) ([]ChatMessage, error)
+	createChatMessage        func(ctx context.Context, record CreateChatMessageRecord) (ChatMessage, error)
+	activeInterruption       func(ctx context.Context, sessionID string) (*Interruption, error)
 }
 
-func NewRunStore(repository Repository) RunStore {
-	return RunStore{
-		startRun:            repository.StartRun,
-		getRunState:         repository.GetRunState,
-		finishRun:           repository.FinishRun,
-		saveStep:            repository.SaveStep,
-		createInterruption:  repository.CreateInterruption,
-		markRunInterrupted:  repository.MarkRunInterrupted,
-		resolveInterruption: repository.ResolveInterruption,
-		saveObservation:     repository.SaveObservation,
-		createChatSession:   repository.CreateChatSession,
-		getChatSession:      repository.GetChatSession,
-		listChatMessages:    repository.ListChatMessages,
-		createChatMessage:   repository.CreateChatMessage,
-		activeInterruption:  repository.ActiveInterruption,
+func NewAgentExecutionStore(repository Repository) AgentExecutionStore {
+	return AgentExecutionStore{
+		startExecution:           repository.StartAgentExecution,
+		getExecutionState:        repository.GetAgentExecutionState,
+		finishExecution:          repository.FinishAgentExecution,
+		saveStep:                 repository.SaveStep,
+		createInterruption:       repository.CreateInterruption,
+		markExecutionInterrupted: repository.MarkAgentExecutionInterrupted,
+		resolveInterruption:      repository.ResolveInterruption,
+		saveObservation:          repository.SaveObservation,
+		createChatSession:        repository.CreateChatSession,
+		getChatSession:           repository.GetChatSession,
+		listChatMessages:         repository.ListChatMessages,
+		createChatMessage:        repository.CreateChatMessage,
+		activeInterruption:       repository.ActiveInterruption,
 	}
 }
 
 type Service struct {
-	planner                Planner
-	catalog                Catalog
-	executor               Executor
-	runStore               RunStore
-	maxSteps               int
-	totalTimeout           time.Duration
-	failedRunFinishTimeout time.Duration
-	eventBus               *EventBus
-	schedule               RunScheduler
+	planner                      Planner
+	catalog                      Catalog
+	executor                     Executor
+	executionStore               AgentExecutionStore
+	maxSteps                     int
+	totalTimeout                 time.Duration
+	failedExecutionFinishTimeout time.Duration
+	eventBus                     *EventBus
+	schedule                     AgentExecutionScheduler
 }
 
-type runState struct {
-	run                 Run
+type executionState struct {
+	execution           AgentExecution
 	message             string
 	attachments         []Attachment
 	interruption        *Interruption
 	instructions        toolcatalog.Instructions
 	tools               []toolcatalog.Tool
 	toolsByName         map[string]toolcatalog.Tool
-	runContext          *RunContext
+	executionContext    *ExecutionContext
 	observations        []Observation
 	unknownToolCount    int
 	businessErrorCounts map[string]int
@@ -100,20 +100,20 @@ type runState struct {
 
 func NewService(config ServiceConfig) Service {
 	return Service{
-		planner:                config.Planner,
-		catalog:                config.Catalog,
-		executor:               config.Executor,
-		runStore:               config.RunStore,
-		maxSteps:               config.MaxSteps,
-		totalTimeout:           config.TotalTimeout,
-		failedRunFinishTimeout: defaultFailedRunFinishTimeout,
-		eventBus:               configuredEventBus(config.EventBus),
-		schedule:               configuredScheduler(config.Schedule),
+		planner:                      config.Planner,
+		catalog:                      config.Catalog,
+		executor:                     config.Executor,
+		executionStore:               config.AgentExecutionStore,
+		maxSteps:                     config.MaxSteps,
+		totalTimeout:                 config.TotalTimeout,
+		failedExecutionFinishTimeout: defaultFailedExecutionFinishTimeout,
+		eventBus:                     configuredEventBus(config.EventBus),
+		schedule:                     configuredScheduler(config.Schedule),
 	}
 }
 
-func defaultRunScheduler(task func()) {
-	go task()
+func defaultExecutionScheduler(task func(context.Context)) {
+	go task(context.Background())
 }
 
 func configuredEventBus(bus *EventBus) *EventBus {
@@ -123,15 +123,15 @@ func configuredEventBus(bus *EventBus) *EventBus {
 	return NewEventBus()
 }
 
-func configuredScheduler(schedule RunScheduler) RunScheduler {
+func configuredScheduler(schedule AgentExecutionScheduler) AgentExecutionScheduler {
 	if schedule != nil {
 		return schedule
 	}
-	return defaultRunScheduler
+	return defaultExecutionScheduler
 }
 
 func (service Service) CreateChat(ctx context.Context, request CreateChatRequest) (ChatSession, error) {
-	session, err := service.runStore.createChatSession(ctx, CreateChatSessionRecord(request))
+	session, err := service.executionStore.createChatSession(ctx, CreateChatSessionRecord(request))
 	if err != nil {
 		return ChatSession{}, fmt.Errorf("create chat session: %w", err)
 	}
@@ -139,7 +139,7 @@ func (service Service) CreateChat(ctx context.Context, request CreateChatRequest
 }
 
 func (service Service) GetChat(ctx context.Context, sessionID string) (ChatSession, error) {
-	session, err := service.runStore.getChatSession(ctx, sessionID)
+	session, err := service.executionStore.getChatSession(ctx, sessionID)
 	if err != nil {
 		return ChatSession{}, fmt.Errorf("get chat session: %w", err)
 	}
@@ -147,7 +147,7 @@ func (service Service) GetChat(ctx context.Context, sessionID string) (ChatSessi
 }
 
 func (service Service) ListChatMessages(ctx context.Context, sessionID string) ([]ChatMessage, error) {
-	messages, err := service.runStore.listChatMessages(ctx, sessionID)
+	messages, err := service.executionStore.listChatMessages(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list chat messages: %w", err)
 	}
@@ -155,7 +155,7 @@ func (service Service) ListChatMessages(ctx context.Context, sessionID string) (
 }
 
 func (service Service) SubscribeChatEvents(ctx context.Context, chatID string) (<-chan ChatEvent, func(), error) {
-	if _, err := service.runStore.getChatSession(ctx, chatID); err != nil {
+	if _, err := service.executionStore.getChatSession(ctx, chatID); err != nil {
 		return nil, nil, fmt.Errorf("get chat session: %w", err)
 	}
 	events, unsubscribe := service.eventBus.Subscribe(chatID)
@@ -163,10 +163,10 @@ func (service Service) SubscribeChatEvents(ctx context.Context, chatID string) (
 }
 
 func (service Service) CreateChatMessage(ctx context.Context, sessionID string, request CreateChatMessageRequest) (SubmitChatMessageResponse, error) {
-	if _, err := service.runStore.getChatSession(ctx, sessionID); err != nil {
+	if _, err := service.executionStore.getChatSession(ctx, sessionID); err != nil {
 		return SubmitChatMessageResponse{}, fmt.Errorf("get chat session: %w", err)
 	}
-	userMessage, err := service.runStore.createChatMessage(ctx, CreateChatMessageRecord{
+	userMessage, err := service.executionStore.createChatMessage(ctx, CreateChatMessageRecord{
 		SessionID:   sessionID,
 		Role:        ChatMessageRoleUser,
 		Content:     request.Message,
@@ -177,48 +177,48 @@ func (service Service) CreateChatMessage(ctx context.Context, sessionID string, 
 	}
 	service.publishMessageCreated(userMessage)
 
-	active, err := service.runStore.activeInterruption(ctx, sessionID)
+	active, err := service.executionStore.activeInterruption(ctx, sessionID)
 	if errors.Is(err, ErrNoActiveInterruption) {
 		active = nil
 	} else if err != nil {
 		return SubmitChatMessageResponse{}, fmt.Errorf("active interruption: %w", err)
 	}
 	if active != nil {
-		return service.submitResumeChatRun(ctx, userMessage, *active, request)
+		return service.submitResumeChatExecution(ctx, userMessage, *active, request)
 	}
-	return service.submitNewChatRun(ctx, userMessage, request)
+	return service.submitNewChatExecution(ctx, userMessage, request)
 }
 
-func (service Service) submitNewChatRun(ctx context.Context, userMessage ChatMessage, request CreateChatMessageRequest) (SubmitChatMessageResponse, error) {
-	run, err := service.runStore.startRun(ctx, CreateRunRecord{
+func (service Service) submitNewChatExecution(ctx context.Context, userMessage ChatMessage, request CreateChatMessageRequest) (SubmitChatMessageResponse, error) {
+	execution, err := service.executionStore.startExecution(ctx, CreateAgentExecutionRecord{
 		SessionID:        userMessage.SessionID,
 		TriggerMessageID: userMessage.ID,
 	})
 	if err != nil {
-		return SubmitChatMessageResponse{}, fmt.Errorf("start run: %w", err)
+		return SubmitChatMessageResponse{}, fmt.Errorf("start execution: %w", err)
 	}
-	service.eventBus.Publish(userMessage.SessionID, ChatEvent{Type: EventTypeRunStarted, ChatID: userMessage.SessionID, RunID: run.ID})
-	service.schedule(func() {
-		service.executeNewChatRun(run, userMessage.SessionID, runRequest(request))
+	service.eventBus.Publish(userMessage.SessionID, ChatEvent{Type: EventTypeExecutionStarted, ChatID: userMessage.SessionID, ExecutionID: execution.ID})
+	service.schedule(func(ctx context.Context) {
+		service.executeNewChatExecution(ctx, execution, userMessage.SessionID, executionRequest(request))
 	})
 	return SubmitChatMessageResponse{
 		ChatID:      userMessage.SessionID,
 		UserMessage: userMessage,
-		RunID:       run.ID,
-		Status:      RunStatusRunning,
+		ExecutionID: execution.ID,
+		Status:      AgentExecutionStatusRunning,
 	}, nil
 }
 
-func (service Service) submitResumeChatRun(ctx context.Context, userMessage ChatMessage, interruption Interruption, request CreateChatMessageRequest) (SubmitChatMessageResponse, error) {
-	if err := service.runStore.resolveInterruption(ctx, interruption.ID, userMessage.ID, InterruptionStatusResolved); err != nil {
+func (service Service) submitResumeChatExecution(ctx context.Context, userMessage ChatMessage, interruption Interruption, request CreateChatMessageRequest) (SubmitChatMessageResponse, error) {
+	if err := service.executionStore.resolveInterruption(ctx, interruption.ID, userMessage.ID, InterruptionStatusResolved); err != nil {
 		return SubmitChatMessageResponse{}, fmt.Errorf("resolve interruption: %w", err)
 	}
-	stateRecord, err := service.runStore.getRunState(ctx, interruption.RunID)
+	stateRecord, err := service.executionStore.getExecutionState(ctx, interruption.ExecutionID)
 	if err != nil {
-		return SubmitChatMessageResponse{}, fmt.Errorf("get run state: %w", err)
+		return SubmitChatMessageResponse{}, fmt.Errorf("get execution state: %w", err)
 	}
-	run := stateRecord.Run
-	run.Status = RunStatusRunning
+	execution := stateRecord.AgentExecution
+	execution.Status = AgentExecutionStatusRunning
 	resolved := interruption
 	resolved.Status = InterruptionStatusResolved
 	resolved.RespondedAt = time.Now().UTC()
@@ -226,85 +226,95 @@ func (service Service) submitResumeChatRun(ctx context.Context, userMessage Chat
 	service.eventBus.Publish(userMessage.SessionID, ChatEvent{
 		Type:           EventTypeInterruptionResolved,
 		ChatID:         userMessage.SessionID,
-		RunID:          run.ID,
+		ExecutionID:    execution.ID,
 		InterruptionID: resolved.ID,
 		Interruption:   &resolved,
 	})
-	service.eventBus.Publish(userMessage.SessionID, ChatEvent{Type: EventTypeRunResumed, ChatID: userMessage.SessionID, RunID: run.ID})
-	service.schedule(func() {
-		service.executeResumedChatRun(run, userMessage.SessionID, runRequest(request), &resolved, stateRecord.Observations)
+	service.eventBus.Publish(userMessage.SessionID, ChatEvent{Type: EventTypeExecutionResumed, ChatID: userMessage.SessionID, ExecutionID: execution.ID})
+	service.schedule(func(ctx context.Context) {
+		service.executeResumedChatExecution(ctx, execution, userMessage.SessionID, executionRequest(request), &resolved, stateRecord.Observations)
 	})
 	return SubmitChatMessageResponse{
 		ChatID:      userMessage.SessionID,
 		UserMessage: userMessage,
-		RunID:       run.ID,
-		Status:      RunStatusRunning,
+		ExecutionID: execution.ID,
+		Status:      AgentExecutionStatusRunning,
 	}, nil
 }
 
-func (service Service) executeNewChatRun(run Run, sessionID string, request runRequest) {
-	ctx, cancel := context.WithTimeout(context.Background(), service.totalTimeout)
+func (service Service) executeNewChatExecution(parent context.Context, execution AgentExecution, sessionID string, request executionRequest) {
+	ctx, cancel := context.WithTimeout(parent, service.totalTimeout)
 	defer cancel()
 
-	response, runErr := service.run(ctx, run, request)
-	service.finishBackgroundRun(ctx, run, sessionID, response, runErr)
+	response, executionErr := service.execute(ctx, execution, request)
+	service.finishBackgroundExecution(ctx, execution, sessionID, response, executionErr)
 }
 
-func (service Service) executeResumedChatRun(run Run, sessionID string, request runRequest, interruption *Interruption, observations []Observation) {
-	ctx, cancel := context.WithTimeout(context.Background(), service.totalTimeout)
+func (service Service) executeResumedChatExecution(parent context.Context, execution AgentExecution, sessionID string, request executionRequest, interruption *Interruption, observations []Observation) {
+	ctx, cancel := context.WithTimeout(parent, service.totalTimeout)
 	defer cancel()
 
-	response, runErr := service.resumeRun(ctx, run, request, interruption, observations)
-	service.finishBackgroundRun(ctx, run, sessionID, response, runErr)
+	response, executionErr := service.resumeExecution(ctx, execution, request, interruption, observations)
+	service.finishBackgroundExecution(ctx, execution, sessionID, response, executionErr)
 }
 
-func (service Service) finishBackgroundRun(ctx context.Context, run Run, sessionID string, response RunResponse, runErr error) {
-	if runErr != nil {
-		failed, failErr := service.failRun(run, response, runErr)
-		if failErr != nil {
-			failed.Error = RedactText(failErr.Error())
-		}
-		service.eventBus.Publish(sessionID, ChatEvent{Type: EventTypeRunFailed, ChatID: sessionID, RunID: run.ID, Run: &failed, Error: failed.Error})
-		return
-	}
-	if err := service.completeRun(ctx, run, response); err != nil {
-		failed := RunResponse{RunID: run.ID, Status: RunStatusFailed, Error: RedactText(err.Error())}
-		service.eventBus.Publish(sessionID, ChatEvent{Type: EventTypeRunFailed, ChatID: sessionID, RunID: run.ID, Run: &failed, Error: failed.Error})
+func (service Service) finishBackgroundExecution(ctx context.Context, execution AgentExecution, sessionID string, response AgentExecutionResponse, executionErr error) {
+	if executionErr != nil {
+		service.failAndPublishExecution(execution, sessionID, response, executionErr)
 		return
 	}
 	assistantMessage, err := service.createAssistantMessage(ctx, sessionID, response)
 	if err != nil {
-		failed := RunResponse{RunID: run.ID, Status: RunStatusFailed, Error: RedactText(err.Error())}
-		service.eventBus.Publish(sessionID, ChatEvent{Type: EventTypeRunFailed, ChatID: sessionID, RunID: run.ID, Run: &failed, Error: failed.Error})
+		service.failAndPublishExecution(execution, sessionID, response, err)
+		return
+	}
+	if response.Status == AgentExecutionStatusInterrupted && response.Interruption != nil {
+		service.publishInterruptionCreated(execution, sessionID, response, assistantMessage)
+		return
+	}
+	if err := service.completeExecution(ctx, execution, response); err != nil {
+		failed := AgentExecutionResponse{ExecutionID: execution.ID, Status: AgentExecutionStatusFailed, Error: RedactText(err.Error())}
+		service.eventBus.Publish(sessionID, ChatEvent{Type: EventTypeExecutionFailed, ChatID: sessionID, ExecutionID: execution.ID, AgentExecution: &failed, Error: failed.Error})
 		return
 	}
 	if assistantMessage != nil {
 		service.publishMessageCreated(*assistantMessage)
 	}
-	if response.Status == RunStatusInterrupted && response.Interruption != nil {
-		service.eventBus.Publish(sessionID, ChatEvent{
-			Type:           EventTypeInterruptionCreated,
-			ChatID:         sessionID,
-			RunID:          run.ID,
-			InterruptionID: response.Interruption.ID,
-			Interruption:   response.Interruption,
-		})
-		return
+	service.eventBus.Publish(sessionID, ChatEvent{Type: EventTypeExecutionCompleted, ChatID: sessionID, ExecutionID: execution.ID, AgentExecution: &response})
+}
+
+func (service Service) failAndPublishExecution(execution AgentExecution, sessionID string, response AgentExecutionResponse, err error) {
+	failed, failErr := service.failExecution(execution, response, err)
+	if failErr != nil {
+		failed.Error = RedactText(failErr.Error())
 	}
-	service.eventBus.Publish(sessionID, ChatEvent{Type: EventTypeRunCompleted, ChatID: sessionID, RunID: run.ID, Run: &response})
+	service.eventBus.Publish(sessionID, ChatEvent{Type: EventTypeExecutionFailed, ChatID: sessionID, ExecutionID: execution.ID, AgentExecution: &failed, Error: failed.Error})
+}
+
+func (service Service) publishInterruptionCreated(execution AgentExecution, sessionID string, response AgentExecutionResponse, assistantMessage *ChatMessage) {
+	service.eventBus.Publish(sessionID, ChatEvent{
+		Type:           EventTypeInterruptionCreated,
+		ChatID:         sessionID,
+		ExecutionID:    execution.ID,
+		InterruptionID: response.Interruption.ID,
+		Interruption:   response.Interruption,
+	})
+	if assistantMessage != nil {
+		service.publishMessageCreated(*assistantMessage)
+	}
 }
 
 func (service Service) publishMessageCreated(message ChatMessage) {
 	service.eventBus.Publish(message.SessionID, ChatEvent{
-		Type:      EventTypeMessageCreated,
-		ChatID:    message.SessionID,
-		MessageID: message.ID,
-		RunID:     message.RunID,
-		Message:   &message,
+		Type:        EventTypeMessageCreated,
+		ChatID:      message.SessionID,
+		MessageID:   message.ID,
+		ExecutionID: message.ExecutionID,
+		Message:     &message,
 	})
 }
 
-func (service Service) createAssistantMessage(ctx context.Context, sessionID string, response RunResponse) (*ChatMessage, error) {
+func (service Service) createAssistantMessage(ctx context.Context, sessionID string, response AgentExecutionResponse) (*ChatMessage, error) {
 	content := response.Answer
 	if response.Interruption != nil {
 		content = response.Interruption.Message
@@ -312,11 +322,11 @@ func (service Service) createAssistantMessage(ctx context.Context, sessionID str
 	if content == "" {
 		return nil, errAssistantMessageEmpty
 	}
-	message, err := service.runStore.createChatMessage(ctx, CreateChatMessageRecord{
-		SessionID: sessionID,
-		RunID:     response.RunID,
-		Role:      ChatMessageRoleAssistant,
-		Content:   content,
+	message, err := service.executionStore.createChatMessage(ctx, CreateChatMessageRecord{
+		SessionID:   sessionID,
+		ExecutionID: response.ExecutionID,
+		Role:        ChatMessageRoleAssistant,
+		Content:     content,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create assistant message: %w", err)
@@ -324,43 +334,43 @@ func (service Service) createAssistantMessage(ctx context.Context, sessionID str
 	return &message, nil
 }
 
-func (service Service) run(ctx context.Context, run Run, request runRequest) (RunResponse, error) {
-	return service.runFromStep(ctx, run, request, nil, nil, 1)
+func (service Service) execute(ctx context.Context, execution AgentExecution, request executionRequest) (AgentExecutionResponse, error) {
+	return service.executeFromStep(ctx, execution, request, nil, nil, 1)
 }
 
-func (service Service) resumeRun(
+func (service Service) resumeExecution(
 	ctx context.Context,
-	run Run,
-	request runRequest,
+	execution AgentExecution,
+	request executionRequest,
 	interruption *Interruption,
 	observations []Observation,
-) (RunResponse, error) {
-	return service.runFromStep(ctx, run, request, interruption, observations, nextStepOrder(observations))
+) (AgentExecutionResponse, error) {
+	return service.executeFromStep(ctx, execution, request, interruption, observations, nextStepOrder(observations))
 }
 
-func (service Service) runFromStep(
+func (service Service) executeFromStep(
 	ctx context.Context,
-	run Run,
-	request runRequest,
+	execution AgentExecution,
+	request executionRequest,
 	interruption *Interruption,
 	observations []Observation,
 	startStepOrder int,
-) (RunResponse, error) {
-	state, err := service.newRunState(ctx, run, request)
+) (AgentExecutionResponse, error) {
+	state, err := service.newExecutionState(ctx, execution, request)
 	if err != nil {
-		return RunResponse{}, err
+		return AgentExecutionResponse{}, err
 	}
 	state.interruption = interruption
 	state.observations = append(state.observations, observations...)
 
 	for stepOrder := startStepOrder; stepOrder < startStepOrder+service.maxSteps; stepOrder++ {
-		response, done, err := service.runStep(ctx, state, stepOrder)
+		response, done, err := service.executionStep(ctx, state, stepOrder)
 		if err != nil || done {
 			return response, err
 		}
 	}
 
-	return RunResponse{}, fmt.Errorf("%w: step limit exceeded", ErrRunFailed)
+	return AgentExecutionResponse{}, fmt.Errorf("%w: step limit exceeded", ErrAgentExecutionFailed)
 }
 
 func nextStepOrder(observations []Observation) int {
@@ -373,7 +383,7 @@ func nextStepOrder(observations []Observation) int {
 	return maxStepOrder + 1
 }
 
-func (service Service) newRunState(ctx context.Context, run Run, request runRequest) (*runState, error) {
+func (service Service) newExecutionState(ctx context.Context, execution AgentExecution, request executionRequest) (*executionState, error) {
 	instructions, err := service.catalog.GetInstructions(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get instructions: %w", err)
@@ -383,19 +393,19 @@ func (service Service) newRunState(ctx context.Context, run Run, request runRequ
 		return nil, fmt.Errorf("list tools: %w", err)
 	}
 
-	return &runState{
-		run:                 run,
+	return &executionState{
+		execution:           execution,
 		message:             request.Message,
 		attachments:         request.Attachments,
 		instructions:        instructions,
 		tools:               tools,
 		toolsByName:         indexToolsByName(tools),
-		runContext:          NewRunContext(),
+		executionContext:    NewExecutionContext(),
 		businessErrorCounts: make(map[string]int),
 	}, nil
 }
 
-func (service Service) runStep(ctx context.Context, state *runState, stepOrder int) (RunResponse, bool, error) {
+func (service Service) executionStep(ctx context.Context, state *executionState, stepOrder int) (AgentExecutionResponse, bool, error) {
 	action, err := service.planner.NextAction(ctx, PlanRequest{
 		Instructions: state.instructions.Content,
 		Message:      state.message,
@@ -405,48 +415,48 @@ func (service Service) runStep(ctx context.Context, state *runState, stepOrder i
 		Observations: state.observations,
 	})
 	if err != nil {
-		return RunResponse{}, false, fmt.Errorf("plan next action: %w", err)
+		return AgentExecutionResponse{}, false, fmt.Errorf("plan next action: %w", err)
 	}
 
 	switch action.Type {
 	case ActionTypeFinalAnswer:
-		return finalResponse(state.run.ID, action), true, nil
+		return finalExecutionResponse(state.execution.ID, action), true, nil
 	case ActionTypeAskUser:
 		response, err := service.askUser(ctx, state, action)
 		return response, true, err
 	case ActionTypeCallTool:
-		return RunResponse{}, false, service.callTool(ctx, state, stepOrder, action)
+		return AgentExecutionResponse{}, false, service.callTool(ctx, state, stepOrder, action)
 	default:
-		return RunResponse{}, false, fmt.Errorf("%w: invalid action type %q", ErrRunFailed, action.Type)
+		return AgentExecutionResponse{}, false, fmt.Errorf("%w: invalid action type %q", ErrAgentExecutionFailed, action.Type)
 	}
 }
 
-func (service Service) askUser(ctx context.Context, state *runState, action PlannerAction) (RunResponse, error) {
-	interruption, err := service.runStore.createInterruption(ctx, Interruption{
-		SessionID: state.run.SessionID,
-		RunID:     state.run.ID,
-		Type:      InterruptionTypeInputRequest,
-		Status:    InterruptionStatusAwaitingReview,
-		Message:   action.Message,
-		Payload:   action.Payload,
+func (service Service) askUser(ctx context.Context, state *executionState, action PlannerAction) (AgentExecutionResponse, error) {
+	interruption, err := service.executionStore.createInterruption(ctx, Interruption{
+		SessionID:   state.execution.SessionID,
+		ExecutionID: state.execution.ID,
+		Type:        InterruptionTypeInputRequest,
+		Status:      InterruptionStatusAwaitingReview,
+		Message:     action.Message,
+		Payload:     action.Payload,
 	})
 	if err != nil {
-		return RunResponse{}, fmt.Errorf("create interruption: %w", err)
+		return AgentExecutionResponse{}, fmt.Errorf("create interruption: %w", err)
 	}
 
-	state.run.Status = RunStatusInterrupted
-	if err := service.runStore.markRunInterrupted(ctx, state.run, interruption); err != nil {
-		return RunResponse{}, fmt.Errorf("mark run interrupted: %w", err)
+	state.execution.Status = AgentExecutionStatusInterrupted
+	if err := service.executionStore.markExecutionInterrupted(ctx, state.execution, interruption); err != nil {
+		return AgentExecutionResponse{}, fmt.Errorf("mark execution interrupted: %w", err)
 	}
 
-	return RunResponse{
-		RunID:        state.run.ID,
-		Status:       RunStatusInterrupted,
+	return AgentExecutionResponse{
+		ExecutionID:  state.execution.ID,
+		Status:       AgentExecutionStatusInterrupted,
 		Interruption: &interruption,
 	}, nil
 }
 
-func (service Service) callTool(ctx context.Context, state *runState, stepOrder int, action PlannerAction) error {
+func (service Service) callTool(ctx context.Context, state *executionState, stepOrder int, action PlannerAction) error {
 	tool, ok := state.toolsByName[action.Tool]
 	if !ok {
 		return service.recordUnknownTool(ctx, state, stepOrder, action.Tool)
@@ -457,36 +467,30 @@ func (service Service) callTool(ctx context.Context, state *runState, stepOrder 
 		return err
 	}
 
-	service.eventBus.Publish(state.run.SessionID, ChatEvent{
-		Type:     EventTypeToolStarted,
-		ChatID:   state.run.SessionID,
-		RunID:    state.run.ID,
-		ToolName: tool.Name,
+	service.eventBus.Publish(state.execution.SessionID, ChatEvent{
+		Type:        EventTypeToolStarted,
+		ChatID:      state.execution.SessionID,
+		ExecutionID: state.execution.ID,
+		ToolName:    tool.Name,
 	})
 	observation, step, err := service.executeTool(ctx, state, stepOrder, tool, inputs)
 	if saveErr := service.saveStep(ctx, step); saveErr != nil {
 		return saveErr
 	}
 	if err != nil {
+		service.publishToolFinished(state.execution, tool.Name, observation)
 		return err
 	}
 
 	state.observations = append(state.observations, observation)
-	if err := service.runStore.saveObservation(ctx, ObservationRecord{
-		RunID:       state.run.ID,
+	if err := service.executionStore.saveObservation(ctx, ObservationRecord{
+		ExecutionID: state.execution.ID,
 		StepOrder:   stepOrder,
 		Observation: observation,
 	}); err != nil {
 		return fmt.Errorf("save observation: %w", err)
 	}
-	savedObservation := observation
-	service.eventBus.Publish(state.run.SessionID, ChatEvent{
-		Type:        EventTypeToolFinished,
-		ChatID:      state.run.SessionID,
-		RunID:       state.run.ID,
-		ToolName:    tool.Name,
-		Observation: &savedObservation,
-	})
+	service.publishToolFinished(state.execution, tool.Name, observation)
 	if observation.Status == StepStatusFailed {
 		return recordBusinessError(state, tool.Name, observation.Error)
 	}
@@ -496,21 +500,21 @@ func (service Service) callTool(ctx context.Context, state *runState, stepOrder 
 
 func (service Service) executeTool(
 	ctx context.Context,
-	state *runState,
+	state *executionState,
 	stepOrder int,
 	tool toolcatalog.Tool,
 	inputs map[string]any,
 ) (Observation, StepRecord, error) {
 	started := time.Now()
 	observation, err := service.executor.Execute(ctx, ExecuteRequest{
-		RunID:      state.run.ID,
-		StepID:     fmt.Sprintf("step_%d", stepOrder),
-		StepOrder:  stepOrder,
-		Tool:       tool,
-		Inputs:     inputs,
-		RunContext: state.runContext,
+		ExecutionID:      state.execution.ID,
+		StepID:           fmt.Sprintf("step_%d", stepOrder),
+		StepOrder:        stepOrder,
+		Tool:             tool,
+		Inputs:           inputs,
+		ExecutionContext: state.executionContext,
 	})
-	step := stepRecord(state.run.ID, stepOrder, tool.ID, inputs, observation, time.Since(started).Milliseconds())
+	step := stepRecord(state.execution.ID, stepOrder, tool.ID, inputs, observation, time.Since(started).Milliseconds())
 	if err != nil {
 		step.Status = StepStatusFailed
 		step.ErrorSummary = err.Error()
@@ -520,11 +524,11 @@ func (service Service) executeTool(
 	return observation, step, nil
 }
 
-func (service Service) recordUnknownTool(ctx context.Context, state *runState, stepOrder int, toolName string) error {
+func (service Service) recordUnknownTool(ctx context.Context, state *executionState, stepOrder int, toolName string) error {
 	state.unknownToolCount++
 	observation := Observation{StepOrder: stepOrder, ToolName: toolName, Status: StepStatusFailed, Error: "unknown tool"}
 	step := StepRecord{
-		RunID:         state.run.ID,
+		ExecutionID:   state.execution.ID,
 		StepOrder:     stepOrder,
 		ToolID:        "",
 		InputSummary:  mustMarshalJSON(map[string]any{}),
@@ -536,75 +540,79 @@ func (service Service) recordUnknownTool(ctx context.Context, state *runState, s
 		return err
 	}
 	if state.unknownToolCount > 1 {
-		return fmt.Errorf("%w: unknown tool %q", ErrRunFailed, toolName)
+		return fmt.Errorf("%w: unknown tool %q", ErrAgentExecutionFailed, toolName)
 	}
 
 	state.observations = append(state.observations, observation)
-	if err := service.runStore.saveObservation(ctx, ObservationRecord{
-		RunID:       state.run.ID,
+	if err := service.executionStore.saveObservation(ctx, ObservationRecord{
+		ExecutionID: state.execution.ID,
 		StepOrder:   stepOrder,
 		Observation: observation,
 	}); err != nil {
 		return fmt.Errorf("save observation: %w", err)
 	}
-	savedObservation := observation
-	service.eventBus.Publish(state.run.SessionID, ChatEvent{
-		Type:        EventTypeToolFinished,
-		ChatID:      state.run.SessionID,
-		RunID:       state.run.ID,
-		ToolName:    toolName,
-		Observation: &savedObservation,
-	})
+	service.publishToolFinished(state.execution, toolName, observation)
 	return nil
 }
 
+func (service Service) publishToolFinished(execution AgentExecution, toolName string, observation Observation) {
+	savedObservation := observation
+	service.eventBus.Publish(execution.SessionID, ChatEvent{
+		Type:        EventTypeToolFinished,
+		ChatID:      execution.SessionID,
+		ExecutionID: execution.ID,
+		ToolName:    toolName,
+		Observation: &savedObservation,
+	})
+}
+
 func (service Service) saveStep(ctx context.Context, step StepRecord) error {
-	if err := service.runStore.saveStep(ctx, step); err != nil {
+	if err := service.executionStore.saveStep(ctx, step); err != nil {
 		return fmt.Errorf("save step: %w", err)
 	}
 
 	return nil
 }
 
-func (service Service) completeRun(ctx context.Context, run Run, response RunResponse) error {
-	if response.Status == RunStatusInterrupted {
+func (service Service) completeExecution(ctx context.Context, execution AgentExecution, response AgentExecutionResponse) error {
+	if response.Status == AgentExecutionStatusInterrupted {
 		return nil
 	}
 
-	run.Status = response.Status
-	run.ErrorSummary = response.Error
-	if err := service.runStore.finishRun(ctx, run); err != nil {
-		return fmt.Errorf("finish run: %w", err)
+	execution.Status = response.Status
+	execution.ErrorSummary = response.Error
+	if err := service.executionStore.finishExecution(ctx, execution); err != nil {
+		return fmt.Errorf("finish execution: %w", err)
 	}
 	return nil
 }
 
-func (service Service) failRun(run Run, response RunResponse, runErr error) (RunResponse, error) {
-	run.Status = RunStatusFailed
-	run.ErrorSummary = runErr.Error()
-	ctx, cancel := context.WithTimeout(context.Background(), service.failedRunFinishTimeout)
+func (service Service) failExecution(execution AgentExecution, response AgentExecutionResponse, executionErr error) (AgentExecutionResponse, error) {
+	execution.Status = AgentExecutionStatusFailed
+	execution.ErrorSummary = executionErr.Error()
+	ctx, cancel := context.WithTimeout(context.Background(), service.failedExecutionFinishTimeout)
 	defer cancel()
-	if err := service.runStore.finishRun(ctx, run); err != nil {
-		runErr = errors.Join(runErr, fmt.Errorf("finish failed run: %w", err))
+	if err := service.executionStore.finishExecution(ctx, execution); err != nil {
+		executionErr = errors.Join(executionErr, fmt.Errorf("finish failed execution: %w", err))
 	}
 
-	response.RunID = run.ID
-	response.Status = RunStatusFailed
-	response.Error = RedactText(runErr.Error())
-	return response, runErr
+	response.ExecutionID = execution.ID
+	response.Status = AgentExecutionStatusFailed
+	response.Error = RedactText(executionErr.Error())
+	return response, executionErr
 }
 
-func finalResponse(runID string, action PlannerAction) RunResponse {
-	return RunResponse{
-		RunID:   runID,
-		Status:  RunStatusSucceeded,
-		Answer:  RedactText(action.Answer),
-		Outputs: redactOutputs(action.Outputs),
+func finalExecutionResponse(executionID string, action PlannerAction) AgentExecutionResponse {
+	return AgentExecutionResponse{
+		ExecutionID: executionID,
+		Status:      AgentExecutionStatusSucceeded,
+		Answer:      RedactText(action.Answer),
+		Outputs:     redactOutputs(action.Outputs),
 	}
 }
 
 func stepRecord(
-	runID string,
+	executionID string,
 	stepOrder int,
 	toolID string,
 	inputs map[string]any,
@@ -612,7 +620,7 @@ func stepRecord(
 	durationMS int64,
 ) StepRecord {
 	step := StepRecord{
-		RunID:         runID,
+		ExecutionID:   executionID,
 		StepOrder:     stepOrder,
 		ToolID:        toolID,
 		InputSummary:  mustMarshalJSON(RedactJSONValue(inputs)),
@@ -629,11 +637,11 @@ func stepRecord(
 	return step
 }
 
-func recordBusinessError(state *runState, toolName string, errorSummary string) error {
+func recordBusinessError(state *executionState, toolName string, errorSummary string) error {
 	errorKey := toolName + "\x00" + errorSummary
 	state.businessErrorCounts[errorKey]++
 	if state.businessErrorCounts[errorKey] > 1 {
-		return fmt.Errorf("%w: repeated tool error from %q: %s", ErrRunFailed, toolName, errorSummary)
+		return fmt.Errorf("%w: repeated tool error from %q: %s", ErrAgentExecutionFailed, toolName, errorSummary)
 	}
 
 	return nil
@@ -650,7 +658,7 @@ func indexToolsByName(tools []toolcatalog.Tool) map[string]toolcatalog.Tool {
 func decodeInputs(raw json.RawMessage) (map[string]any, error) {
 	var inputs map[string]any
 	if err := json.Unmarshal(raw, &inputs); err != nil {
-		return nil, fmt.Errorf("%w: decode tool inputs: %w", ErrRunFailed, err)
+		return nil, fmt.Errorf("%w: decode tool inputs: %w", ErrAgentExecutionFailed, err)
 	}
 	return nonNilMap(inputs), nil
 }

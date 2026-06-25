@@ -90,8 +90,8 @@ func TestHandlerCreateChatMessageAcceptsJSON(t *testing.T) {
 	service := &fakeChatService{chatMessage: SubmitChatMessageResponse{
 		ChatID:      "chat_test",
 		UserMessage: ChatMessage{ID: "msg_user", SessionID: "chat_test", Role: ChatMessageRoleUser, Content: "hi"},
-		RunID:       testRunID,
-		Status:      RunStatusRunning,
+		ExecutionID: testExecutionID,
+		Status:      AgentExecutionStatusRunning,
 	}}
 	resp := testCreateChatMessageRequest(t, service, []byte(`{"message":"hi"}`))
 	defer closeAgentResponseBody(t, resp)
@@ -106,9 +106,10 @@ func TestHandlerCreateChatMessageAcceptsJSON(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("Decode() error = %v", err)
 	}
-	if body.RunID != testRunID || body.Status != RunStatusRunning || body.UserMessage.ID != "msg_user" {
+	if body.ExecutionID != testExecutionID || body.Status != AgentExecutionStatusRunning || body.UserMessage.ID != "msg_user" {
 		t.Fatalf("body = %#v, want async submit response", body)
 	}
+	requireJSONExecutionID(t, body)
 }
 
 func TestHandlerGetChatReturnsSession(t *testing.T) {
@@ -161,7 +162,7 @@ func TestHandlerListChatMessagesReturnsMessages(t *testing.T) {
 
 func TestHandlerSubscribeChatEventsStreamsConnectedAndEvents(t *testing.T) {
 	events := make(chan ChatEvent, 2)
-	events <- ChatEvent{Type: EventTypeRunStarted, ChatID: "chat_1", RunID: "run_1"}
+	events <- ChatEvent{Type: EventTypeExecutionStarted, ChatID: "chat_1", ExecutionID: "exec_1"}
 	close(events)
 	handler := NewHandler(nil, nil, fakeChatEventService{
 		subscribeChatEvents: func(_ context.Context, chatID string) (<-chan ChatEvent, func(), error) {
@@ -192,13 +193,11 @@ func TestHandlerSubscribeChatEventsStreamsConnectedAndEvents(t *testing.T) {
 	if !strings.Contains(text, "event: connected") {
 		t.Fatalf("body = %q, want connected event", text)
 	}
-	if !strings.Contains(text, "event: run.started") || !strings.Contains(text, `"run_id":"run_1"`) {
-		t.Fatalf("body = %q, want run.started event", text)
-	}
+	requireSSEExecutionStarted(t, text)
 }
 
 func TestHandlerCreateChatMessageAcceptsMultipartFiles(t *testing.T) {
-	service := &fakeChatService{chatMessage: SubmitChatMessageResponse{ChatID: "chat_test", RunID: testRunID, Status: RunStatusRunning}}
+	service := &fakeChatService{chatMessage: SubmitChatMessageResponse{ChatID: "chat_test", ExecutionID: testExecutionID, Status: AgentExecutionStatusRunning}}
 	resp := performMultipartCreateChatMessage(t, service, "update catalog", "merchant_catalog.pdf", "application/pdf", []byte("%PDF-1.7"))
 	defer closeAgentResponseBody(t, resp)
 
@@ -209,7 +208,7 @@ func TestHandlerCreateChatMessageAcceptsMultipartFiles(t *testing.T) {
 }
 
 func TestHandlerCreateChatMessageAllowsAttachmentWithoutMessage(t *testing.T) {
-	service := &fakeChatService{chatMessage: SubmitChatMessageResponse{ChatID: "chat_test", RunID: testRunID, Status: RunStatusRunning}}
+	service := &fakeChatService{chatMessage: SubmitChatMessageResponse{ChatID: "chat_test", ExecutionID: testExecutionID, Status: AgentExecutionStatusRunning}}
 	resp := performMultipartCreateChatMessage(t, service, "", "accounts.csv", "text/csv", []byte("a,b\n"))
 	defer closeAgentResponseBody(t, resp)
 
@@ -261,7 +260,7 @@ func TestHandlerCreateChatMessageRejectsUnsupportedMultipartFile(t *testing.T) {
 }
 
 func TestHandlerCreateChatMessageAcceptsValidatedJSONAttachments(t *testing.T) {
-	service := &fakeChatService{chatMessage: SubmitChatMessageResponse{ChatID: "chat_test", RunID: testRunID, Status: RunStatusRunning}}
+	service := &fakeChatService{chatMessage: SubmitChatMessageResponse{ChatID: "chat_test", ExecutionID: testExecutionID, Status: AgentExecutionStatusRunning}}
 	body := []byte(`{
 		"message":"update catalog",
 		"attachments":[{
@@ -356,6 +355,32 @@ func requireMultipartPDFRequest(t *testing.T, request CreateChatMessageRequest) 
 	}
 	if attachment.Data == "" {
 		t.Fatal("Data is empty, want base64 file bytes")
+	}
+}
+
+func requireJSONExecutionID(t *testing.T, value any) {
+	t.Helper()
+
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if strings.Contains(string(encoded), "run_id") {
+		t.Fatalf("JSON = %s, want no run_id", encoded)
+	}
+	if !strings.Contains(string(encoded), "execution_id") {
+		t.Fatalf("JSON = %s, want execution_id", encoded)
+	}
+}
+
+func requireSSEExecutionStarted(t *testing.T, text string) {
+	t.Helper()
+
+	if strings.Contains(text, "run_id") {
+		t.Fatalf("body = %q, want no run_id", text)
+	}
+	if !strings.Contains(text, "event: execution.started") || !strings.Contains(text, `"execution_id":"exec_1"`) {
+		t.Fatalf("body = %q, want execution.started event with execution_id", text)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,7 +31,16 @@ func Run(cfg config.Config) error {
 	}
 	defer datastore.Close(database)
 
-	routerConfig, err := newRouterConfig(cfg, database)
+	executionScheduler := newExecutionScheduler(ctx)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := executionScheduler.Shutdown(shutdownCtx); err != nil {
+			log.Printf("shutdown agent executions: %v", err)
+		}
+	}()
+
+	routerConfig, err := newRouterConfig(cfg, database, executionScheduler.Schedule)
 	if err != nil {
 		return err
 	}
@@ -58,17 +68,70 @@ func Run(cfg config.Config) error {
 	if err := router.ShutdownWithContext(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown http: %w", err)
 	}
+	if err := executionScheduler.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown agent executions: %w", err)
+	}
 
 	return nil
 }
 
-func newRouterConfig(cfg config.Config, database *gorm.DB) (httpapi.RouterConfig, error) {
+type executionScheduler struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	done   chan struct{}
+	mu     sync.Mutex
+	once   sync.Once
+	wg     sync.WaitGroup
+	closed bool
+}
+
+func newExecutionScheduler(parent context.Context) *executionScheduler {
+	ctx, cancel := context.WithCancel(parent)
+	return &executionScheduler{ctx: ctx, cancel: cancel, done: make(chan struct{})}
+}
+
+func (scheduler *executionScheduler) Schedule(task func(context.Context)) {
+	scheduler.mu.Lock()
+	if scheduler.closed {
+		scheduler.mu.Unlock()
+		return
+	}
+	scheduler.wg.Add(1)
+	scheduler.mu.Unlock()
+
+	go func() {
+		defer scheduler.wg.Done()
+		task(scheduler.ctx)
+	}()
+}
+
+func (scheduler *executionScheduler) Shutdown(ctx context.Context) error {
+	scheduler.once.Do(func() {
+		scheduler.mu.Lock()
+		scheduler.closed = true
+		scheduler.cancel()
+		scheduler.mu.Unlock()
+		go func() {
+			scheduler.wg.Wait()
+			close(scheduler.done)
+		}()
+	})
+
+	select {
+	case <-scheduler.done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("wait for agent executions: %w", ctx.Err())
+	}
+}
+
+func newRouterConfig(cfg config.Config, database *gorm.DB, schedule agent.AgentExecutionScheduler) (httpapi.RouterConfig, error) {
 	toolRepository := toolcatalog.NewRepository(database)
 	toolService := toolcatalog.NewService(toolRepository, cfg.TrustedToolDir)
 	toolHandler := toolcatalog.NewHandler(toolService)
 
 	agentRepository := agent.NewRepository(database)
-	agentHandler := newAgentHandler(cfg, agentRepository, toolService)
+	agentHandler := newAgentHandler(cfg, agentRepository, toolService, schedule)
 
 	statusService := status.NewService()
 	statusHandler := status.NewHandler(statusService, cfg.AppEnv)
@@ -81,18 +144,19 @@ func newRouterConfig(cfg config.Config, database *gorm.DB) (httpapi.RouterConfig
 	}, nil
 }
 
-func newAgentHandler(cfg config.Config, repository agent.Repository, catalog agent.Catalog) agent.Handler {
+func newAgentHandler(cfg config.Config, repository agent.Repository, catalog agent.Catalog, schedule agent.AgentExecutionScheduler) agent.Handler {
 	planner := agent.NewOpenAIPlanner(cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.OpenAIBaseURL)
 	executor := agent.NewCLIExecutor()
 	eventBus := agent.NewEventBus()
 	service := agent.NewService(agent.ServiceConfig{
-		Planner:      planner,
-		Catalog:      catalog,
-		Executor:     executor,
-		RunStore:     agent.NewRunStore(repository),
-		MaxSteps:     cfg.AgentMaxSteps,
-		TotalTimeout: time.Duration(cfg.AgentTotalTimeoutMS) * time.Millisecond,
-		EventBus:     eventBus,
+		Planner:             planner,
+		Catalog:             catalog,
+		Executor:            executor,
+		AgentExecutionStore: agent.NewAgentExecutionStore(repository),
+		MaxSteps:            cfg.AgentMaxSteps,
+		TotalTimeout:        time.Duration(cfg.AgentTotalTimeoutMS) * time.Millisecond,
+		EventBus:            eventBus,
+		Schedule:            schedule,
 	})
 	return agent.NewHandler(service, service, service, agent.UploadConfig{
 		MaxFiles:      cfg.AgentMaxFilesPerRun,

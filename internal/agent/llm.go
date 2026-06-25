@@ -21,7 +21,7 @@ type PlanRequest struct {
 	Instructions string
 	Message      string
 	Attachments  []Attachment
-	Interaction  *Interaction
+	Interruption *Interruption
 	Tools        []toolcatalog.Tool
 	Observations []Observation
 }
@@ -89,7 +89,7 @@ func buildPlannerPrompt(request PlanRequest) ([]byte, error) {
 		"instructions":    request.Instructions,
 		"message":         request.Message,
 		"attachments":     attachmentPromptViews(request.Attachments),
-		"interaction":     request.Interaction,
+		"interruption":    request.Interruption,
 		"tools":           plannerTools(request.Tools),
 		"observations":    request.Observations,
 		"output_contract": "Return exactly one JSON object for the next planner action. Do not include Markdown, prose, fenced JSON, refusals, or partial output.",

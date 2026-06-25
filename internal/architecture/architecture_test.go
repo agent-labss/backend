@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -27,6 +30,16 @@ var allowedPackages = []string{
 	modulePath + "/internal/platform/sqlite",
 	modulePath + "/internal/status",
 	modulePath + "/internal/toolcatalog",
+}
+
+var forbiddenProductionSQLPatterns = []string{
+	".Where(\"",
+	".Order(\"",
+	".First(&",
+	".Find(&",
+	".Scan(&",
+	".Save(&",
+	".Exec(ctx, `",
 }
 
 type packageInfo struct {
@@ -77,6 +90,15 @@ func TestPackageBoundaries(t *testing.T) {
 	assertDoesNotImport(t, packages, modulePath+"/cmd/server", modulePath+"/internal/status")
 }
 
+func TestProductionSQLUsesGeneratedQueries(t *testing.T) {
+	for _, source := range productionGoFiles(t) {
+		forbidden := firstForbiddenProductionSQLPattern(t, source)
+		if forbidden != "" {
+			t.Fatalf("%s contains %q; put custom SQL in internal/database/queryinput and use internal/database/generated", source, forbidden)
+		}
+	}
+}
+
 func loadPackages(t *testing.T) []packageInfo {
 	t.Helper()
 
@@ -120,4 +142,70 @@ func assertDoesNotImport(t *testing.T, packages []packageInfo, source string, fo
 			t.Fatalf("%s must not import %s", source, forbidden)
 		}
 	}
+}
+
+func productionGoFiles(t *testing.T) []string {
+	t.Helper()
+
+	files, err := walkProductionGoFiles()
+	if err != nil {
+		t.Fatalf("walk production go files: %v", err)
+	}
+	return files
+}
+
+func walkProductionGoFiles() ([]string, error) {
+	var files []string
+	err := filepath.WalkDir("../..", func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if skipProductionDir(path, entry) {
+			return filepath.SkipDir
+		}
+		if includeProductionGoFile(path, entry) {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk source tree: %w", err)
+	}
+	return files, nil
+}
+
+func skipProductionDir(path string, entry os.DirEntry) bool {
+	if !entry.IsDir() {
+		return false
+	}
+	return path == "../../.git" ||
+		path == "../../.codegraph" ||
+		path == "../../.worktrees" ||
+		path == "../../internal/database/generated"
+}
+
+func includeProductionGoFile(path string, entry os.DirEntry) bool {
+	if entry.IsDir() {
+		return false
+	}
+	if strings.HasPrefix(path, "../../internal/platform/sqlite/") {
+		return false
+	}
+	return strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go")
+}
+
+func firstForbiddenProductionSQLPattern(t *testing.T, source string) string {
+	t.Helper()
+
+	content, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read %s: %v", source, err)
+	}
+	text := string(content)
+	for _, forbidden := range forbiddenProductionSQLPatterns {
+		if strings.Contains(text, forbidden) {
+			return forbidden
+		}
+	}
+	return ""
 }

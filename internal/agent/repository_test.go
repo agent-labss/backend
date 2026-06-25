@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -19,7 +20,7 @@ const testToolID = "tool_1"
 func TestRepositoryPersistsRunAndStep(t *testing.T) {
 	repository := NewRepository(newTestDatabase(t))
 
-	run, err := repository.StartRun(context.Background(), CreateRunRecord{Message: "build a report"})
+	run, err := repository.StartRun(context.Background(), CreateRunRecord{})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v, want nil", err)
 	}
@@ -45,38 +46,23 @@ func TestRepositoryPersistsRunAndStep(t *testing.T) {
 	}
 
 	run.Status = RunStatusSucceeded
-	run.Answer = testRunAnswer
 	if err := repository.FinishRun(context.Background(), run); err != nil {
 		t.Fatalf("FinishRun() error = %v, want nil", err)
 	}
 }
 
-func TestRepositoryRedactsMessageBeforePersistingRun(t *testing.T) {
+//nolint:cyclop // This integration test verifies ordered chat persistence, attachments, and run linkage in one transaction path.
+func TestRepositoryPersistsChatSessionMessagesAttachmentsAndRunLink(t *testing.T) {
 	repository := NewRepository(newTestDatabase(t))
-	message := "export report with Authorization: Bearer " + testSecretToken
 
-	run, err := repository.StartRun(context.Background(), CreateRunRecord{Message: message})
+	session, err := repository.CreateChatSession(context.Background(), CreateChatSessionRecord{Title: "Reports"})
 	if err != nil {
-		t.Fatalf("StartRun() error = %v, want nil", err)
+		t.Fatalf("CreateChatSession() error = %v, want nil", err)
 	}
-
-	var record database.AgentRun
-	if err := repository.database.WithContext(context.Background()).Where("id = ?", run.ID).First(&record).Error; err != nil {
-		t.Fatalf("load saved run error = %v", err)
-	}
-	if strings.Contains(record.Message, testSecretToken) {
-		t.Fatalf("record.Message = %q, want redacted token", record.Message)
-	}
-	if !strings.Contains(record.Message, redactedValue) {
-		t.Fatalf("record.Message = %q, want redacted marker", record.Message)
-	}
-}
-
-func TestRepositoryPersistsRunAttachments(t *testing.T) {
-	repository := NewRepository(newTestDatabase(t))
-
-	run, err := repository.StartRun(context.Background(), CreateRunRecord{
-		Message: "update catalog",
+	userMessage, err := repository.CreateChatMessage(context.Background(), CreateChatMessageRecord{
+		SessionID: session.ID,
+		Role:      ChatMessageRoleUser,
+		Content:   "帮我导出报表",
 		Attachments: []Attachment{{
 			ID:       "att_test",
 			Filename: "merchant_catalog.pdf",
@@ -87,166 +73,151 @@ func TestRepositoryPersistsRunAttachments(t *testing.T) {
 		}},
 	})
 	if err != nil {
+		t.Fatalf("CreateChatMessage(user) error = %v, want nil", err)
+	}
+	run, err := repository.StartRun(context.Background(), CreateRunRecord{
+		SessionID:        session.ID,
+		TriggerMessageID: userMessage.ID,
+	})
+	if err != nil {
 		t.Fatalf("StartRun() error = %v, want nil", err)
 	}
-
-	var records []database.AgentRunAttachment
-	if err := repository.database.WithContext(context.Background()).Where("run_id = ?", run.ID).Find(&records).Error; err != nil {
-		t.Fatalf("load attachments error = %v", err)
-	}
-	if len(records) != 1 {
-		t.Fatalf("len(records) = %d, want 1", len(records))
-	}
-	if records[0].Filename != "merchant_catalog.pdf" {
-		t.Fatalf("Filename = %q, want merchant_catalog.pdf", records[0].Filename)
-	}
-	if records[0].ProviderFileID != "" {
-		t.Fatalf("ProviderFileID = %q, want empty", records[0].ProviderFileID)
-	}
-}
-
-func TestRepositoryRollsBackRunWhenAttachmentPersistenceFails(t *testing.T) {
-	repository := NewRepository(newTestDatabase(t))
-
-	_, err := repository.StartRun(context.Background(), CreateRunRecord{
-		Message: "update catalog",
-		Attachments: []Attachment{
-			{
-				ID:       "att_duplicate",
-				Filename: "merchant_catalog.pdf",
-				MIMEType: "application/pdf",
-				Kind:     AttachmentKindPDF,
-				Size:     123,
-			},
-			{
-				ID:       "att_duplicate",
-				Filename: "merchant_catalog_2.pdf",
-				MIMEType: "application/pdf",
-				Kind:     AttachmentKindPDF,
-				Size:     456,
-			},
-		},
+	assistantMessage, err := repository.CreateChatMessage(context.Background(), CreateChatMessageRecord{
+		SessionID: session.ID,
+		RunID:     run.ID,
+		Role:      ChatMessageRoleAssistant,
+		Content:   testRunAnswer,
 	})
-	if err == nil {
-		t.Fatal("StartRun() error = nil, want duplicate attachment error")
+	if err != nil {
+		t.Fatalf("CreateChatMessage(assistant) error = %v, want nil", err)
 	}
 
-	var runCount int64
-	if err := repository.database.WithContext(context.Background()).Model(&database.AgentRun{}).Count(&runCount).Error; err != nil {
-		t.Fatalf("count runs error = %v", err)
+	messages, err := repository.ListChatMessages(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("ListChatMessages() error = %v, want nil", err)
 	}
-	if runCount != 0 {
-		t.Fatalf("run count = %d, want 0", runCount)
+	if len(messages) != 2 {
+		t.Fatalf("len(messages) = %d, want 2", len(messages))
 	}
-
-	var attachmentCount int64
-	if err := repository.database.WithContext(context.Background()).Model(&database.AgentRunAttachment{}).Count(&attachmentCount).Error; err != nil {
-		t.Fatalf("count attachments error = %v", err)
+	if messages[0].ID != userMessage.ID || messages[0].Sequence != 1 || len(messages[0].Attachments) != 1 {
+		t.Fatalf("first message = %#v, want user sequence 1 with attachment", messages[0])
 	}
-	if attachmentCount != 0 {
-		t.Fatalf("attachment count = %d, want 0", attachmentCount)
+	if messages[1].ID != assistantMessage.ID || messages[1].RunID != run.ID || messages[1].Sequence != 2 {
+		t.Fatalf("second message = %#v, want assistant linked to run sequence 2", messages[1])
 	}
 }
 
-func TestRepositoryPersistsWaitingInteractionAndRunStatus(t *testing.T) {
+func TestRepositoryRedactsChatMessageBeforePersisting(t *testing.T) {
 	repository := NewRepository(newTestDatabase(t))
-	run, err := repository.StartRun(context.Background(), CreateRunRecord{Message: "delete duplicate account"})
+	session, err := repository.CreateChatSession(context.Background(), CreateChatSessionRecord{})
+	if err != nil {
+		t.Fatalf("CreateChatSession() error = %v", err)
+	}
+	message := "export report with Authorization: Bearer " + testSecretToken
+
+	saved, err := repository.CreateChatMessage(context.Background(), CreateChatMessageRecord{
+		SessionID: session.ID,
+		Role:      ChatMessageRoleUser,
+		Content:   message,
+	})
+	if err != nil {
+		t.Fatalf("CreateChatMessage() error = %v", err)
+	}
+
+	var record database.ChatMessage
+	if err := repository.database.WithContext(context.Background()).Where("id = ?", saved.ID).First(&record).Error; err != nil {
+		t.Fatalf("load saved chat message error = %v", err)
+	}
+	if strings.Contains(record.Content, testSecretToken) {
+		t.Fatalf("record.Content = %q, want redacted token", record.Content)
+	}
+	if !strings.Contains(record.Content, redactedValue) {
+		t.Fatalf("record.Content = %q, want redacted marker", record.Content)
+	}
+}
+
+func TestRepositoryReturnsNotFoundForMissingChatSessionAndRun(t *testing.T) {
+	repository := NewRepository(newTestDatabase(t))
+
+	if _, err := repository.GetChatSession(context.Background(), "chat_missing"); !errors.Is(err, ErrChatSessionNotFound) {
+		t.Fatalf("GetChatSession() error = %v, want ErrChatSessionNotFound", err)
+	}
+	if _, err := repository.GetRunState(context.Background(), "run_missing"); !errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("GetRunState() error = %v, want ErrRunNotFound", err)
+	}
+}
+
+//nolint:cyclop,funlen,gocognit // This integration test verifies interruption persistence, lookup, resolution, and run state together.
+func TestRepositoryPersistsAndResolvesInterruption(t *testing.T) {
+	repository := NewRepository(newTestDatabase(t))
+	session, err := repository.CreateChatSession(context.Background(), CreateChatSessionRecord{})
+	if err != nil {
+		t.Fatalf("CreateChatSession() error = %v", err)
+	}
+	userMessage, err := repository.CreateChatMessage(context.Background(), CreateChatMessageRecord{
+		SessionID: session.ID,
+		Role:      ChatMessageRoleUser,
+		Content:   "delete duplicate account",
+	})
+	if err != nil {
+		t.Fatalf("CreateChatMessage(user) error = %v", err)
+	}
+	run, err := repository.StartRun(context.Background(), CreateRunRecord{
+		SessionID:        session.ID,
+		TriggerMessageID: userMessage.ID,
+	})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
 	}
-	interaction := Interaction{
-		RunID:   run.ID,
-		Type:    InteractionTypeUserInput,
-		Status:  InteractionStatusPending,
-		Message: "Delete the duplicate account?",
-		Payload: json.RawMessage(`{"risk":"destructive"}`),
+	interruption := Interruption{
+		SessionID: session.ID,
+		RunID:     run.ID,
+		Type:      InterruptionTypeApproval,
+		Status:    InterruptionStatusAwaitingReview,
+		Message:   "Delete the duplicate account?",
+		Payload:   json.RawMessage(`{"risk":"destructive"}`),
 	}
 
-	saved, err := repository.CreateInteraction(context.Background(), interaction)
+	saved, err := repository.CreateInterruption(context.Background(), interruption)
 	if err != nil {
-		t.Fatalf("CreateInteraction() error = %v", err)
+		t.Fatalf("CreateInterruption() error = %v", err)
 	}
-	run.Status = RunStatusWaitingForUser
-	if err := repository.MarkRunWaiting(context.Background(), run, saved); err != nil {
-		t.Fatalf("MarkRunWaiting() error = %v", err)
-	}
-
-	loaded, err := repository.GetRun(context.Background(), run.ID)
-	if err != nil {
-		t.Fatalf("GetRun() error = %v", err)
-	}
-	if loaded.Status != RunStatusWaitingForUser {
-		t.Fatalf("Status = %q, want waiting_for_user", loaded.Status)
-	}
-	if loaded.Interaction == nil || loaded.Interaction.Message != "Delete the duplicate account?" {
-		t.Fatalf("Interaction = %#v, want pending interaction", loaded.Interaction)
-	}
-}
-
-func TestRepositoryPersistsUserTurnAttachmentsAndRespondsInteraction(t *testing.T) {
-	repository := NewRepository(newTestDatabase(t))
-	run, interaction := createWaitingRunForRepositoryTest(t, repository)
-
-	turn, err := repository.CreateRunTurn(context.Background(), CreateRunTurnRecord{
-		RunID:   run.ID,
-		Message: "Use this file.",
-		Attachments: []Attachment{{
-			ID:       "att_turn",
-			Filename: "accounts.csv",
-			MIMEType: "text/csv",
-			Kind:     AttachmentKindCSV,
-			Size:     7,
-			Data:     "ignored",
-		}},
-	})
-	if err != nil {
-		t.Fatalf("CreateRunTurn() error = %v", err)
-	}
-	if err := repository.MarkInteractionResponded(context.Background(), interaction.ID, turn.ID); err != nil {
-		t.Fatalf("MarkInteractionResponded() error = %v", err)
+	run.Status = RunStatusInterrupted
+	if err := repository.MarkRunInterrupted(context.Background(), run, saved); err != nil {
+		t.Fatalf("MarkRunInterrupted() error = %v", err)
 	}
 
 	loaded, err := repository.GetRunState(context.Background(), run.ID)
 	if err != nil {
 		t.Fatalf("GetRunState() error = %v", err)
 	}
-	requireRepositoryTurnState(t, loaded)
-}
-
-func createWaitingRunForRepositoryTest(t *testing.T, repository Repository) (Run, Interaction) {
-	t.Helper()
-
-	run, err := repository.StartRun(context.Background(), CreateRunRecord{Message: "update catalog"})
-	if err != nil {
-		t.Fatalf("StartRun() error = %v", err)
+	if loaded.Run.Status != RunStatusInterrupted {
+		t.Fatalf("Status = %q, want interrupted", loaded.Run.Status)
 	}
-	interaction, err := repository.CreateInteraction(context.Background(), Interaction{
-		RunID:   run.ID,
-		Type:    InteractionTypeUserInput,
-		Status:  InteractionStatusPending,
-		Message: "Upload the catalog file.",
+	if loaded.ActiveInterruption == nil || loaded.ActiveInterruption.Message != "Delete the duplicate account?" {
+		t.Fatalf("ActiveInterruption = %#v, want active interruption", loaded.ActiveInterruption)
+	}
+	active, err := repository.ActiveInterruption(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("ActiveInterruption() error = %v", err)
+	}
+	if active.ID != saved.ID {
+		t.Fatalf("active.ID = %q, want %q", active.ID, saved.ID)
+	}
+
+	response, err := repository.CreateChatMessage(context.Background(), CreateChatMessageRecord{
+		SessionID: session.ID,
+		Role:      ChatMessageRoleUser,
+		Content:   "continue",
 	})
 	if err != nil {
-		t.Fatalf("CreateInteraction() error = %v", err)
+		t.Fatalf("CreateChatMessage(response) error = %v", err)
 	}
-	if err := repository.MarkRunWaiting(context.Background(), run, interaction); err != nil {
-		t.Fatalf("MarkRunWaiting() error = %v", err)
+	if err := repository.ResolveInterruption(context.Background(), saved.ID, response.ID, InterruptionStatusResolved); err != nil {
+		t.Fatalf("ResolveInterruption() error = %v", err)
 	}
-
-	return run, interaction
-}
-
-func requireRepositoryTurnState(t *testing.T, loaded RunStateRecord) {
-	t.Helper()
-
-	if len(loaded.Turns) != 1 || loaded.Turns[0].Message != "Use this file." {
-		t.Fatalf("Turns = %#v, want saved turn", loaded.Turns)
-	}
-	if len(loaded.Turns[0].Attachments) != 1 || loaded.Turns[0].Attachments[0].Filename != "accounts.csv" {
-		t.Fatalf("Turn attachments = %#v, want accounts.csv", loaded.Turns[0].Attachments)
-	}
-	if loaded.Pending != nil {
-		t.Fatalf("Pending = %#v, want nil after response", loaded.Pending)
+	if _, err := repository.ActiveInterruption(context.Background(), session.ID); !errors.Is(err, ErrNoActiveInterruption) {
+		t.Fatalf("ActiveInterruption() error = %v, want ErrNoActiveInterruption", err)
 	}
 }
 

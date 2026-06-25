@@ -68,12 +68,13 @@ func (repository Repository) UpdateInstructions(ctx context.Context, instruction
 		return Instructions{}, ErrDatabaseMissing
 	}
 
+	updatedAt := time.Now().UTC()
 	record := database.AgentInstruction{
 		ID:        1,
 		Content:   instructions.Content,
-		UpdatedAt: time.Now().UTC(),
+		UpdatedAt: updatedAt,
 	}
-	if err := repository.database.WithContext(ctx).Save(&record).Error; err != nil {
+	if err := generated.AgentInstructionQueries[database.AgentInstruction](repository.database).UpsertByID(ctx, record.ID, record.Content, updatedAt); err != nil {
 		return Instructions{}, fmt.Errorf("update agent instructions: %w", err)
 	}
 
@@ -91,6 +92,9 @@ func (repository Repository) GetInstructions(ctx context.Context) (Instructions,
 			return Instructions{}, ErrInstructionsNotFound
 		}
 		return Instructions{}, fmt.Errorf("get agent instructions: %w", err)
+	}
+	if record.ID == 0 {
+		return Instructions{}, ErrInstructionsNotFound
 	}
 
 	return instructionsFromRecord(record), nil

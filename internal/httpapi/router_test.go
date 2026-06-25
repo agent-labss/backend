@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
@@ -33,17 +34,21 @@ func (handler fakeToolHandler) UpdateInstructions(c fiber.Ctx) error {
 	return c.SendStatus(http.StatusOK)
 }
 
-type fakeAgentHandler struct{}
+type fakeChatHandler struct{}
 
-func (handler fakeAgentHandler) CreateRun(c fiber.Ctx) error {
+func (handler fakeChatHandler) CreateChat(c fiber.Ctx) error {
+	return c.SendStatus(http.StatusCreated)
+}
+
+func (handler fakeChatHandler) GetChat(c fiber.Ctx) error {
 	return c.SendStatus(http.StatusOK)
 }
 
-func (handler fakeAgentHandler) GetRun(c fiber.Ctx) error {
+func (handler fakeChatHandler) ListChatMessages(c fiber.Ctx) error {
 	return c.SendStatus(http.StatusOK)
 }
 
-func (handler fakeAgentHandler) CreateRunTurn(c fiber.Ctx) error {
+func (handler fakeChatHandler) CreateChatMessage(c fiber.Ctx) error {
 	return c.SendStatus(http.StatusOK)
 }
 
@@ -83,16 +88,32 @@ func TestToolRoutesAreRegistered(t *testing.T) {
 	assertRouteStatus(t, http.MethodPost, toolcatalog.ToolsPath, http.StatusCreated)
 }
 
-func TestAgentRunRouteIsRegistered(t *testing.T) {
-	assertRouteStatus(t, http.MethodPost, agent.AgentRunsPath, http.StatusOK)
+func TestLegacyAgentRunRoutesAreNotRegistered(t *testing.T) {
+	assertRouteStatus(t, http.MethodPost, "/api/agent/runs", http.StatusNotFound)
+	assertRouteStatus(t, http.MethodGet, "/api/agent/runs/run_test", http.StatusNotFound)
+	assertRouteStatus(t, http.MethodPost, "/api/agent/runs/run_test/turns", http.StatusNotFound)
 }
 
-func TestAgentRunGetRouteIsRegistered(t *testing.T) {
-	assertRouteStatus(t, http.MethodGet, agent.AgentRunsPath+"/run_test", http.StatusOK)
+func TestRouterConfigDoesNotExposeLegacyAgentHandler(t *testing.T) {
+	if _, ok := reflect.TypeOf(RouterConfig{}).FieldByName("AgentHandler"); ok {
+		t.Fatal("RouterConfig exposes legacy AgentHandler, want chat handlers only")
+	}
 }
 
-func TestAgentRunTurnRouteIsRegistered(t *testing.T) {
-	assertRouteStatus(t, http.MethodPost, agent.AgentRunsPath+"/run_test/turns", http.StatusOK)
+func TestChatRouteIsRegistered(t *testing.T) {
+	assertRouteStatus(t, http.MethodPost, agent.ChatSessionsPath, http.StatusCreated)
+}
+
+func TestChatGetRouteIsRegistered(t *testing.T) {
+	assertRouteStatus(t, http.MethodGet, agent.ChatSessionsPath+"/chat_test", http.StatusOK)
+}
+
+func TestChatMessagesGetRouteIsRegistered(t *testing.T) {
+	assertRouteStatus(t, http.MethodGet, agent.ChatSessionsPath+"/chat_test/messages", http.StatusOK)
+}
+
+func TestChatMessageRouteIsRegistered(t *testing.T) {
+	assertRouteStatus(t, http.MethodPost, agent.ChatSessionsPath+"/chat_test/messages", http.StatusOK)
 }
 
 func TestNewRouterUsesUploadBodyLimit(t *testing.T) {
@@ -109,9 +130,10 @@ func assertRouteStatus(t *testing.T, method string, path string, wantStatus int)
 	t.Helper()
 
 	app := NewRouter(RouterConfig{
-		StatusHandler: status.NewHandler(status.NewService(), "test"),
-		ToolHandler:   fakeToolHandler{},
-		AgentHandler:  fakeAgentHandler{},
+		StatusHandler:      status.NewHandler(status.NewService(), "test"),
+		ToolHandler:        fakeToolHandler{},
+		ChatSessionHandler: fakeChatHandler{},
+		ChatMessageHandler: fakeChatHandler{},
 	})
 
 	req, err := http.NewRequest(method, path, nil)

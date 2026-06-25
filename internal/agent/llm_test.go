@@ -367,12 +367,12 @@ func TestBuildPlannerPromptAllowsAskUser(t *testing.T) {
 	}
 }
 
-func TestBuildPlannerPromptIncludesPendingInteraction(t *testing.T) {
+func TestBuildPlannerPromptIncludesInterruption(t *testing.T) {
 	prompt, err := buildPlannerPrompt(PlanRequest{
 		Message: "ok",
-		Interaction: &Interaction{
+		Interruption: &Interruption{
 			ID:      "int_test",
-			Type:    InteractionTypeUserInput,
+			Type:    InterruptionTypeInputRequest,
 			Message: "Delete the duplicate account?",
 			Payload: json.RawMessage(`{"risk":"destructive"}`),
 		},
@@ -381,10 +381,13 @@ func TestBuildPlannerPromptIncludesPendingInteraction(t *testing.T) {
 		t.Fatalf("buildPlannerPrompt() error = %v", err)
 	}
 	if !strings.Contains(string(prompt), "Delete the duplicate account?") {
-		t.Fatalf("prompt = %s, want pending interaction message", prompt)
+		t.Fatalf("prompt = %s, want interruption message", prompt)
 	}
 	if !strings.Contains(string(prompt), "int_test") {
-		t.Fatalf("prompt = %s, want pending interaction id", prompt)
+		t.Fatalf("prompt = %s, want interruption id", prompt)
+	}
+	if !strings.Contains(string(prompt), "interruption") {
+		t.Fatalf("prompt = %s, want interruption key", prompt)
 	}
 }
 

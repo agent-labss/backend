@@ -13,89 +13,92 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
-type fakeRunService struct {
-	response    RunResponse
+type fakeChatService struct {
+	chat        ChatSession
+	messages    []ChatMessage
+	chatMessage ChatMessageResponse
 	err         error
 	called      bool
-	request     CreateRunRequest
-	getRunID    string
-	turnRunID   string
-	turnRequest CreateRunTurnRequest
+	chatRequest CreateChatMessageRequest
+	chatID      string
 }
 
-func (service *fakeRunService) Run(_ context.Context, request CreateRunRequest) (RunResponse, error) {
+func (service *fakeChatService) CreateChat(ctx context.Context, request CreateChatRequest) (ChatSession, error) {
+	_ = ctx
+	service.chat = ChatSession{ID: "chat_test", Title: request.Title, Status: ChatSessionStatusOpen}
+	return service.chat, service.err
+}
+
+func (service *fakeChatService) GetChat(_ context.Context, chatID string) (ChatSession, error) {
+	service.chatID = chatID
+	return service.chat, service.err
+}
+
+func (service *fakeChatService) ListChatMessages(_ context.Context, chatID string) ([]ChatMessage, error) {
+	service.chatID = chatID
+	return service.messages, service.err
+}
+
+func (service *fakeChatService) CreateChatMessage(_ context.Context, chatID string, request CreateChatMessageRequest) (ChatMessageResponse, error) {
 	service.called = true
-	service.request = request
-	return service.response, service.err
+	service.chatID = chatID
+	service.chatRequest = request
+	return service.chatMessage, service.err
 }
 
-func (service *fakeRunService) GetRun(_ context.Context, runID string) (RunResponse, error) {
-	service.getRunID = runID
-	return service.response, service.err
-}
-
-func (service *fakeRunService) CreateRunTurn(_ context.Context, runID string, request CreateRunTurnRequest) (RunResponse, error) {
-	service.turnRunID = runID
-	service.turnRequest = request
-	return service.response, service.err
-}
-
-func TestHandlerCreateRunReturnsResponse(t *testing.T) {
-	service := &fakeRunService{response: RunResponse{RunID: testRunID, Status: RunStatusSucceeded, Answer: "done"}}
-	handler := NewHandler(service)
+func TestHandlerCreateChatReturnsSession(t *testing.T) {
+	service := &fakeChatService{}
+	handler := NewHandler(service, service)
 	app := fiber.New()
-	app.Post(AgentRunsPath, handler.CreateRun)
+	app.Post(ChatSessionsPath, handler.CreateChat)
 
-	req, err := http.NewRequest(http.MethodPost, AgentRunsPath, bytes.NewReader([]byte(`{"message":"export report"}`)))
+	req, err := http.NewRequest(http.MethodPost, ChatSessionsPath, bytes.NewReader([]byte(`{"title":"Reports"}`)))
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-
 	resp, err := app.Test(req)
 	if err != nil {
 		t.Fatalf("Test() error = %v", err)
 	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			t.Fatalf("Body.Close() error = %v", err)
-		}
-	}()
+	defer closeAgentResponseBody(t, resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
-
-	var body RunResponse
+	var body ChatSession
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("Decode() error = %v", err)
 	}
-	if body.RunID != testRunID {
-		t.Fatalf("RunID = %q, want %s", body.RunID, testRunID)
-	}
-	if !service.called {
-		t.Fatal("Run() was not called")
+	if body.ID != "chat_test" || body.Title != "Reports" {
+		t.Fatalf("body = %#v, want created chat", body)
 	}
 }
 
-func TestHandlerCreateRunAcceptsMultipartFiles(t *testing.T) {
-	service := &fakeRunService{response: RunResponse{RunID: testRunID, Status: RunStatusSucceeded, Answer: "done"}}
-	resp := performMultipartCreateRun(t, service, "根据我上传的 pdf，更新商家的目录", "merchant_catalog.pdf", "application/pdf", []byte("%PDF-1.7"))
+func TestHandlerCreateChatMessageAcceptsJSON(t *testing.T) {
+	service := &fakeChatService{chatMessage: ChatMessageResponse{
+		UserMessage:      ChatMessage{ID: "msg_user", SessionID: "chat_test", Role: ChatMessageRoleUser, Content: "hi"},
+		AssistantMessage: &ChatMessage{ID: "msg_assistant", SessionID: "chat_test", Role: ChatMessageRoleAssistant, Content: "hello"},
+		Run:              RunResponse{RunID: testRunID, Status: RunStatusSucceeded, Answer: "hello"},
+	}}
+	resp := testCreateChatMessageRequest(t, service, []byte(`{"message":"hi"}`))
 	defer closeAgentResponseBody(t, resp)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	requireMultipartPDFRequest(t, service.request)
+	if service.chatID != "chat_test" || service.chatRequest.Message != "hi" {
+		t.Fatalf("chat message call = %q %#v, want chat_test hi", service.chatID, service.chatRequest)
+	}
 }
 
-func TestHandlerGetRunReturnsResponse(t *testing.T) {
-	service := &fakeRunService{response: RunResponse{RunID: testRunID, Status: RunStatusWaitingForUser, Interaction: &Interaction{ID: "int_test", Type: InteractionTypeUserInput, Message: "Need input"}}}
-	handler := NewHandler(service)
+func TestHandlerGetChatReturnsSession(t *testing.T) {
+	service := &fakeChatService{chat: ChatSession{ID: "chat_test", Title: "Reports", Status: ChatSessionStatusOpen}}
+	handler := NewHandler(service, service)
 	app := fiber.New()
-	app.Get(AgentRunPath, handler.GetRun)
+	app.Get(ChatSessionPath, handler.GetChat)
 
-	req, err := http.NewRequest(http.MethodGet, AgentRunsPath+"/"+testRunID, nil)
+	req, err := http.NewRequest(http.MethodGet, ChatSessionsPath+"/chat_test", nil)
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
@@ -108,22 +111,21 @@ func TestHandlerGetRunReturnsResponse(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	if service.getRunID != testRunID {
-		t.Fatalf("getRunID = %q, want %s", service.getRunID, testRunID)
+	if service.chatID != "chat_test" {
+		t.Fatalf("chatID = %q, want chat_test", service.chatID)
 	}
 }
 
-func TestHandlerCreateRunTurnAcceptsJSON(t *testing.T) {
-	service := &fakeRunService{response: RunResponse{RunID: testRunID, Status: RunStatusSucceeded, Answer: "continued"}}
-	handler := NewHandler(service)
+func TestHandlerListChatMessagesReturnsMessages(t *testing.T) {
+	service := &fakeChatService{messages: []ChatMessage{{ID: "msg_1", SessionID: "chat_test", Role: ChatMessageRoleUser, Content: "hi"}}}
+	handler := NewHandler(service, service)
 	app := fiber.New()
-	app.Post(AgentRunTurnsPath, handler.CreateRunTurn)
+	app.Get(ChatMessagesPath, handler.ListChatMessages)
 
-	req, err := http.NewRequest(http.MethodPost, AgentRunsPath+"/"+testRunID+"/turns", bytes.NewReader([]byte(`{"message":"ok"}`)))
+	req, err := http.NewRequest(http.MethodGet, ChatSessionsPath+"/chat_test/messages", nil)
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req)
 	if err != nil {
 		t.Fatalf("Test() error = %v", err)
@@ -133,57 +135,156 @@ func TestHandlerCreateRunTurnAcceptsJSON(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	if service.turnRunID != testRunID || service.turnRequest.Message != "ok" {
-		t.Fatalf("turn = %s %#v, want same run ok", service.turnRunID, service.turnRequest)
+	if service.chatID != "chat_test" {
+		t.Fatalf("chatID = %q, want chat_test", service.chatID)
 	}
 }
 
-func TestHandlerCreateRunTurnAcceptsMultipartFiles(t *testing.T) {
-	service := &fakeRunService{response: RunResponse{RunID: testRunID, Status: RunStatusSucceeded, Answer: "continued"}}
-	resp := performMultipartCreateRunTurn(t, service, testRunID, "用这个文件继续", "accounts.csv", "text/csv", []byte("a,b\n"))
+func TestHandlerCreateChatMessageAcceptsMultipartFiles(t *testing.T) {
+	service := &fakeChatService{chatMessage: ChatMessageResponse{Run: RunResponse{RunID: testRunID, Status: RunStatusSucceeded}}}
+	resp := performMultipartCreateChatMessage(t, service, "update catalog", "merchant_catalog.pdf", "application/pdf", []byte("%PDF-1.7"))
 	defer closeAgentResponseBody(t, resp)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	if service.turnRunID != testRunID || service.turnRequest.Message != "用这个文件继续" {
-		t.Fatalf("turn = %s %#v, want same run message", service.turnRunID, service.turnRequest)
-	}
-	if len(service.turnRequest.Attachments) != 1 || service.turnRequest.Attachments[0].Kind != AttachmentKindCSV {
-		t.Fatalf("attachments = %#v, want csv attachment", service.turnRequest.Attachments)
-	}
+	requireMultipartPDFRequest(t, service.chatRequest)
 }
 
-func TestHandlerCreateRunTurnAllowsAttachmentWithoutMessage(t *testing.T) {
-	service := &fakeRunService{response: RunResponse{RunID: testRunID, Status: RunStatusSucceeded, Answer: "continued"}}
-	resp := performMultipartCreateRunTurn(t, service, testRunID, "", "accounts.csv", "text/csv", []byte("a,b\n"))
+func TestHandlerCreateChatMessageAllowsAttachmentWithoutMessage(t *testing.T) {
+	service := &fakeChatService{chatMessage: ChatMessageResponse{Run: RunResponse{RunID: testRunID, Status: RunStatusSucceeded}}}
+	resp := performMultipartCreateChatMessage(t, service, "", "accounts.csv", "text/csv", []byte("a,b\n"))
 	defer closeAgentResponseBody(t, resp)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
-	if len(service.turnRequest.Attachments) != 1 {
-		t.Fatalf("len(Attachments) = %d, want 1", len(service.turnRequest.Attachments))
+	if len(service.chatRequest.Attachments) != 1 {
+		t.Fatalf("len(Attachments) = %d, want 1", len(service.chatRequest.Attachments))
 	}
 }
 
-func TestHandlerCreateRunTurnRejectsBlankMessageWithoutAttachments(t *testing.T) {
-	service := &fakeRunService{}
-	resp := testCreateRunTurnRequest(t, service, testRunID, []byte(`{"message":"   "}`))
+func TestHandlerCreateChatMessageRejectsBlankMessageWithoutAttachments(t *testing.T) {
+	service := &fakeChatService{}
+	resp := testCreateChatMessageRequest(t, service, []byte(`{"message":"   "}`))
 	defer closeAgentResponseBody(t, resp)
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusBadRequest)
 	}
-	if service.turnRunID != "" {
-		t.Fatal("CreateRunTurn() called for blank message without attachments, want no call")
+	if service.called {
+		t.Fatal("CreateChatMessage() called for blank message without attachments, want no call")
 	}
 }
 
-func requireMultipartPDFRequest(t *testing.T, request CreateRunRequest) {
+func TestHandlerCreateChatMessageRejectsBadJSON(t *testing.T) {
+	service := &fakeChatService{}
+	resp := testCreateChatMessageRequest(t, service, []byte(`{`))
+	defer closeAgentResponseBody(t, resp)
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if service.called {
+		t.Fatal("CreateChatMessage() called for bad JSON, want no call")
+	}
+}
+
+func TestHandlerCreateChatMessageRejectsUnsupportedMultipartFile(t *testing.T) {
+	service := &fakeChatService{}
+	resp := performMultipartCreateChatMessage(t, service, "update catalog", "script.sh", "text/x-shellscript", []byte("echo nope"))
+	defer closeAgentResponseBody(t, resp)
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if service.called {
+		t.Fatal("CreateChatMessage() called for unsupported file, want no call")
+	}
+}
+
+func TestHandlerCreateChatMessageAcceptsValidatedJSONAttachments(t *testing.T) {
+	service := &fakeChatService{chatMessage: ChatMessageResponse{Run: RunResponse{RunID: testRunID, Status: RunStatusSucceeded}}}
+	body := []byte(`{
+		"message":"update catalog",
+		"attachments":[{
+			"filename":"merchant_catalog.pdf",
+			"mime_type":"application/pdf",
+			"size":8,
+			"data":"` + base64.StdEncoding.EncodeToString([]byte("%PDF-1.7")) + `"
+		}]
+	}`)
+
+	resp := testCreateChatMessageRequestWithUploadConfig(t, service, body, UploadConfig{MaxFiles: 1, MaxFileBytes: 1024, MaxTotalBytes: 1024})
+	defer closeAgentResponseBody(t, resp)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if len(service.chatRequest.Attachments) != 1 {
+		t.Fatalf("len(Attachments) = %d, want 1", len(service.chatRequest.Attachments))
+	}
+	attachment := service.chatRequest.Attachments[0]
+	if attachment.Kind != AttachmentKindPDF {
+		t.Fatalf("Kind = %q, want %q", attachment.Kind, AttachmentKindPDF)
+	}
+	if attachment.Size != 8 {
+		t.Fatalf("Size = %d, want 8", attachment.Size)
+	}
+	if attachment.ID == "" {
+		t.Fatal("ID is empty, want generated attachment ID")
+	}
+}
+
+func TestHandlerCreateChatMessageRejectsOversizedJSONAttachment(t *testing.T) {
+	service := &fakeChatService{}
+	body := []byte(`{
+		"message":"update catalog",
+		"attachments":[{
+			"filename":"merchant_catalog.pdf",
+			"mime_type":"application/pdf",
+			"size":8,
+			"data":"` + base64.StdEncoding.EncodeToString([]byte("%PDF-1.7")) + `"
+		}]
+	}`)
+
+	resp := testCreateChatMessageRequestWithUploadConfig(t, service, body, UploadConfig{MaxFiles: 1, MaxFileBytes: 2, MaxTotalBytes: 1024})
+	defer closeAgentResponseBody(t, resp)
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if service.called {
+		t.Fatal("CreateChatMessage() called for oversized JSON attachment, want no call")
+	}
+}
+
+func TestHandlerCreateChatMessageRejectsJSONAttachmentFileID(t *testing.T) {
+	service := &fakeChatService{}
+	resp := testCreateChatMessageRequestWithUploadConfig(t, service, []byte(`{
+		"message":"update catalog",
+		"attachments":[{
+			"filename":"merchant_catalog.pdf",
+			"mime_type":"application/pdf",
+			"kind":"pdf",
+			"size":8,
+			"file_id":"file_123"
+		}]
+	}`), UploadConfig{MaxFiles: 1, MaxFileBytes: 1024, MaxTotalBytes: 1024})
+	defer closeAgentResponseBody(t, resp)
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if service.called {
+		t.Fatal("CreateChatMessage() called for JSON file_id attachment, want no call")
+	}
+}
+
+func requireMultipartPDFRequest(t *testing.T, request CreateChatMessageRequest) {
 	t.Helper()
 
-	if request.Message != "根据我上传的 pdf，更新商家的目录" {
+	if request.Message != "update catalog" {
 		t.Fatalf("Message = %q, want uploaded message", request.Message)
 	}
 	if len(request.Attachments) != 1 {
@@ -201,106 +302,15 @@ func requireMultipartPDFRequest(t *testing.T, request CreateRunRequest) {
 	}
 }
 
-func TestHandlerCreateRunRejectsUnsupportedMultipartFile(t *testing.T) {
-	service := &fakeRunService{}
-	resp := performMultipartCreateRun(t, service, "update catalog", "script.sh", "text/x-shellscript", []byte("echo nope"))
-	defer closeAgentResponseBody(t, resp)
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusBadRequest)
-	}
-	if service.called {
-		t.Fatal("Run() called for unsupported file, want no call")
-	}
-}
-
-func TestHandlerCreateRunAcceptsValidatedJSONAttachments(t *testing.T) {
-	service := &fakeRunService{response: RunResponse{RunID: testRunID, Status: RunStatusSucceeded, Answer: "done"}}
-	body := []byte(`{
-		"message":"update catalog",
-		"attachments":[{
-			"filename":"merchant_catalog.pdf",
-			"mime_type":"application/pdf",
-			"size":8,
-			"data":"` + base64.StdEncoding.EncodeToString([]byte("%PDF-1.7")) + `"
-		}]
-	}`)
-
-	resp := testCreateRunRequestWithUploadConfig(t, service, body, UploadConfig{MaxFiles: 1, MaxFileBytes: 1024, MaxTotalBytes: 1024})
-	defer closeAgentResponseBody(t, resp)
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
-	}
-	if len(service.request.Attachments) != 1 {
-		t.Fatalf("len(Attachments) = %d, want 1", len(service.request.Attachments))
-	}
-	attachment := service.request.Attachments[0]
-	if attachment.Kind != AttachmentKindPDF {
-		t.Fatalf("Kind = %q, want %q", attachment.Kind, AttachmentKindPDF)
-	}
-	if attachment.Size != 8 {
-		t.Fatalf("Size = %d, want 8", attachment.Size)
-	}
-	if attachment.ID == "" {
-		t.Fatal("ID is empty, want generated attachment ID")
-	}
-}
-
-func TestHandlerCreateRunRejectsOversizedJSONAttachment(t *testing.T) {
-	service := &fakeRunService{}
-	body := []byte(`{
-		"message":"update catalog",
-		"attachments":[{
-			"filename":"merchant_catalog.pdf",
-			"mime_type":"application/pdf",
-			"size":8,
-			"data":"` + base64.StdEncoding.EncodeToString([]byte("%PDF-1.7")) + `"
-		}]
-	}`)
-
-	resp := testCreateRunRequestWithUploadConfig(t, service, body, UploadConfig{MaxFiles: 1, MaxFileBytes: 2, MaxTotalBytes: 1024})
-	defer closeAgentResponseBody(t, resp)
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusBadRequest)
-	}
-	if service.called {
-		t.Fatal("Run() called for oversized JSON attachment, want no call")
-	}
-}
-
-func TestHandlerCreateRunRejectsJSONAttachmentFileID(t *testing.T) {
-	service := &fakeRunService{}
-	resp := testCreateRunRequestWithUploadConfig(t, service, []byte(`{
-		"message":"update catalog",
-		"attachments":[{
-			"filename":"merchant_catalog.pdf",
-			"mime_type":"application/pdf",
-			"kind":"pdf",
-			"size":8,
-			"file_id":"file_123"
-		}]
-	}`), UploadConfig{MaxFiles: 1, MaxFileBytes: 1024, MaxTotalBytes: 1024})
-	defer closeAgentResponseBody(t, resp)
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusBadRequest)
-	}
-	if service.called {
-		t.Fatal("Run() called for JSON file_id attachment, want no call")
-	}
-}
-
-func performMultipartCreateRun(t *testing.T, service *fakeRunService, message string, filename string, mimeType string, data []byte) *http.Response {
+func performMultipartCreateChatMessage(t *testing.T, service *fakeChatService, message string, filename string, mimeType string, data []byte) *http.Response {
 	t.Helper()
 
-	handler := NewHandler(service, UploadConfig{MaxFiles: 2, MaxFileBytes: 1024, MaxTotalBytes: 2048})
+	handler := NewHandler(service, service, UploadConfig{MaxFiles: 2, MaxFileBytes: 1024, MaxTotalBytes: 2048})
 	app := fiber.New()
-	app.Post(AgentRunsPath, handler.CreateRun)
+	app.Post(ChatMessagesPath, handler.CreateChatMessage)
 
 	body, contentType := multipartRunBody(t, message, filename, mimeType, data)
-	req, err := http.NewRequest(http.MethodPost, AgentRunsPath, body)
+	req, err := http.NewRequest(http.MethodPost, ChatSessionsPath+"/chat_test/messages", body)
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
@@ -314,89 +324,20 @@ func performMultipartCreateRun(t *testing.T, service *fakeRunService, message st
 	return resp
 }
 
-func performMultipartCreateRunTurn(t *testing.T, service *fakeRunService, runID string, message string, filename string, mimeType string, data []byte) *http.Response {
+func testCreateChatMessageRequest(t *testing.T, service *fakeChatService, body []byte) *http.Response {
 	t.Helper()
 
-	handler := NewHandler(service, UploadConfig{MaxFiles: 2, MaxFileBytes: 1024, MaxTotalBytes: 2048})
+	return testCreateChatMessageRequestWithUploadConfig(t, service, body, UploadConfig{MaxFiles: 5, MaxFileBytes: 10 * 1024 * 1024, MaxTotalBytes: 25 * 1024 * 1024})
+}
+
+func testCreateChatMessageRequestWithUploadConfig(t *testing.T, service *fakeChatService, body []byte, uploadConfig UploadConfig) *http.Response {
+	t.Helper()
+
+	handler := NewHandler(service, service, uploadConfig)
 	app := fiber.New()
-	app.Post(AgentRunTurnsPath, handler.CreateRunTurn)
+	app.Post(ChatMessagesPath, handler.CreateChatMessage)
 
-	body, contentType := multipartRunBody(t, message, filename, mimeType, data)
-	req, err := http.NewRequest(http.MethodPost, AgentRunsPath+"/"+runID+"/turns", body)
-	if err != nil {
-		t.Fatalf("NewRequest() error = %v", err)
-	}
-	req.Header.Set("Content-Type", contentType)
-
-	resp, err := app.Test(req)
-	if err != nil {
-		t.Fatalf("Test() error = %v", err)
-	}
-
-	return resp
-}
-
-func TestHandlerCreateRunRejectsBadJSON(t *testing.T) {
-	service := &fakeRunService{}
-	resp := testCreateRunRequest(t, service, []byte(`{`))
-	defer closeAgentResponseBody(t, resp)
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusBadRequest)
-	}
-	if service.called {
-		t.Fatal("Run() called for bad JSON, want no call")
-	}
-}
-
-func TestHandlerCreateRunRejectsBlankMessage(t *testing.T) {
-	service := &fakeRunService{}
-	resp := testCreateRunRequest(t, service, []byte(`{"message":"   "}`))
-	defer closeAgentResponseBody(t, resp)
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusBadRequest)
-	}
-	if service.called {
-		t.Fatal("Run() called for blank message, want no call")
-	}
-}
-
-func testCreateRunRequest(t *testing.T, service *fakeRunService, body []byte) *http.Response {
-	t.Helper()
-
-	return testCreateRunRequestWithUploadConfig(t, service, body, UploadConfig{MaxFiles: 5, MaxFileBytes: 10 * 1024 * 1024, MaxTotalBytes: 25 * 1024 * 1024})
-}
-
-func testCreateRunRequestWithUploadConfig(t *testing.T, service *fakeRunService, body []byte, uploadConfig UploadConfig) *http.Response {
-	t.Helper()
-
-	handler := NewHandler(service, uploadConfig)
-	app := fiber.New()
-	app.Post(AgentRunsPath, handler.CreateRun)
-
-	req, err := http.NewRequest(http.MethodPost, AgentRunsPath, bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("NewRequest() error = %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := app.Test(req)
-	if err != nil {
-		t.Fatalf("Test() error = %v", err)
-	}
-
-	return resp
-}
-
-func testCreateRunTurnRequest(t *testing.T, service *fakeRunService, runID string, body []byte) *http.Response {
-	t.Helper()
-
-	handler := NewHandler(service)
-	app := fiber.New()
-	app.Post(AgentRunTurnsPath, handler.CreateRunTurn)
-
-	req, err := http.NewRequest(http.MethodPost, AgentRunsPath+"/"+runID+"/turns", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, ChatSessionsPath+"/chat_test/messages", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}

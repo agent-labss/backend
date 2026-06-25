@@ -61,19 +61,26 @@ func (executor *fakeExecutor) Execute(_ context.Context, request ExecuteRequest)
 }
 
 type memoryRunStore struct {
-	record       CreateRunRecord
-	run          Run
-	steps        []StepRecord
-	interactions []Interaction
-	turns        []RunTurn
-	observations []Observation
-	waitingRun   Run
-	finishedRun  Run
+	record        CreateRunRecord
+	run           Run
+	steps         []StepRecord
+	interruptions []Interruption
+	chats         []ChatSession
+	messages      []ChatMessage
+	observations  []Observation
+	waitingRun    Run
+	finishedRun   Run
 }
 
 func (store *memoryRunStore) StartRun(_ context.Context, record CreateRunRecord) (Run, error) {
 	store.record = record
-	store.run = Run{ID: testRunID, Message: record.Message, Status: RunStatusRunning, StartedAt: time.Now()}
+	store.run = Run{
+		ID:               testRunID,
+		SessionID:        record.SessionID,
+		TriggerMessageID: record.TriggerMessageID,
+		Status:           RunStatusRunning,
+		StartedAt:        time.Now(),
+	}
 	return store.run, nil
 }
 
@@ -88,59 +95,46 @@ func (store *memoryRunStore) SaveStep(_ context.Context, step StepRecord) error 
 	return nil
 }
 
-func (store *memoryRunStore) GetRun(_ context.Context, runID string) (RunResponse, error) {
-	if store.run.ID != runID {
-		return RunResponse{}, ErrRunNotFound
-	}
-	return RunResponse{RunID: store.run.ID, Status: store.run.Status, Answer: store.run.Answer, Outputs: store.run.Outputs, Error: store.run.ErrorSummary, Interaction: store.pendingInteraction()}, nil
-}
-
 func (store *memoryRunStore) GetRunState(_ context.Context, runID string) (RunStateRecord, error) {
 	if store.run.ID != runID {
 		return RunStateRecord{}, ErrRunNotFound
 	}
+	active := store.activeInterruption()
 	return RunStateRecord{
-		Run:          store.run,
-		Attachments:  store.record.Attachments,
-		Interactions: append([]Interaction{}, store.interactions...),
-		Pending:      store.pendingInteraction(),
-		Turns:        append([]RunTurn{}, store.turns...),
-		Observations: append([]Observation{}, store.observations...),
+		Run:                store.run,
+		Interruptions:      append([]Interruption{}, store.interruptions...),
+		ActiveInterruption: active,
+		Observations:       append([]Observation{}, store.observations...),
 	}, nil
 }
 
-func (store *memoryRunStore) CreateInteraction(_ context.Context, interaction Interaction) (Interaction, error) {
-	if interaction.ID == "" {
-		interaction.ID = "int_test"
+func (store *memoryRunStore) CreateInterruption(_ context.Context, interruption Interruption) (Interruption, error) {
+	if interruption.ID == "" {
+		interruption.ID = "int_test"
 	}
-	if interaction.Type == "" {
-		interaction.Type = InteractionTypeUserInput
+	if interruption.Type == "" {
+		interruption.Type = InterruptionTypeInputRequest
 	}
-	if interaction.Status == "" {
-		interaction.Status = InteractionStatusPending
+	if interruption.Status == "" {
+		interruption.Status = InterruptionStatusAwaitingReview
 	}
-	store.interactions = append(store.interactions, interaction)
-	return interaction, nil
+	store.interruptions = append(store.interruptions, interruption)
+	return interruption, nil
 }
 
-func (store *memoryRunStore) MarkRunWaiting(_ context.Context, run Run, _ Interaction) error {
-	run.Status = RunStatusWaitingForUser
+func (store *memoryRunStore) MarkRunInterrupted(_ context.Context, run Run, _ Interruption) error {
+	run.Status = RunStatusInterrupted
 	store.run = run
 	store.waitingRun = run
 	return nil
 }
 
-func (store *memoryRunStore) CreateRunTurn(_ context.Context, record CreateRunTurnRecord) (RunTurn, error) {
-	turn := RunTurn{ID: "turn_test", RunID: record.RunID, Message: record.Message, Attachments: record.Attachments, CreatedAt: time.Now()}
-	store.turns = append(store.turns, turn)
-	return turn, nil
-}
-
-func (store *memoryRunStore) MarkInteractionResponded(_ context.Context, interactionID string, _ string) error {
-	for index := range store.interactions {
-		if store.interactions[index].ID == interactionID {
-			store.interactions[index].Status = InteractionStatusResponded
-			store.interactions[index].RespondedAt = time.Now()
+func (store *memoryRunStore) ResolveInterruption(_ context.Context, interruptionID string, messageID string, status InterruptionStatus) error {
+	for index := range store.interruptions {
+		if store.interruptions[index].ID == interruptionID {
+			store.interruptions[index].Status = status
+			store.interruptions[index].RespondedAt = time.Now()
+			_ = messageID
 		}
 	}
 	return nil
@@ -151,11 +145,62 @@ func (store *memoryRunStore) SaveObservation(_ context.Context, record Observati
 	return nil
 }
 
-func (store *memoryRunStore) pendingInteraction() *Interaction {
-	for index := range store.interactions {
-		if store.interactions[index].Status == InteractionStatusPending {
-			interaction := store.interactions[index]
-			return &interaction
+func (store *memoryRunStore) CreateChatSession(_ context.Context, record CreateChatSessionRecord) (ChatSession, error) {
+	session := ChatSession{ID: "chat_test", Title: record.Title, Status: ChatSessionStatusOpen, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	store.chats = append(store.chats, session)
+	return session, nil
+}
+
+func (store *memoryRunStore) GetChatSession(_ context.Context, sessionID string) (ChatSession, error) {
+	for _, session := range store.chats {
+		if session.ID == sessionID {
+			return session, nil
+		}
+	}
+	return ChatSession{}, ErrChatSessionNotFound
+}
+
+func (store *memoryRunStore) ListChatMessages(_ context.Context, sessionID string) ([]ChatMessage, error) {
+	messages := []ChatMessage{}
+	for _, message := range store.messages {
+		if message.SessionID == sessionID {
+			messages = append(messages, message)
+		}
+	}
+	return messages, nil
+}
+
+func (store *memoryRunStore) CreateChatMessage(_ context.Context, record CreateChatMessageRecord) (ChatMessage, error) {
+	message := ChatMessage{
+		ID:          fmt.Sprintf("msg_%d", len(store.messages)+1),
+		SessionID:   record.SessionID,
+		RunID:       record.RunID,
+		Role:        record.Role,
+		Content:     record.Content,
+		Status:      ChatMessageStatusCompleted,
+		Sequence:    len(store.messages) + 1,
+		Attachments: record.Attachments,
+		CreatedAt:   time.Now(),
+	}
+	store.messages = append(store.messages, message)
+	return message, nil
+}
+
+func (store *memoryRunStore) ActiveInterruption(_ context.Context, sessionID string) (*Interruption, error) {
+	for index := range store.interruptions {
+		if store.interruptions[index].SessionID == sessionID && store.interruptions[index].Status == InterruptionStatusAwaitingReview {
+			interruption := store.interruptions[index]
+			return &interruption, nil
+		}
+	}
+	return nil, ErrNoActiveInterruption
+}
+
+func (store *memoryRunStore) activeInterruption() *Interruption {
+	for index := range store.interruptions {
+		if store.interruptions[index].Status == InterruptionStatusAwaitingReview {
+			interruption := store.interruptions[index]
+			return &interruption
 		}
 	}
 	return nil
@@ -163,16 +208,19 @@ func (store *memoryRunStore) pendingInteraction() *Interaction {
 
 func runStores(store *memoryRunStore) RunStore {
 	return RunStore{
-		startRun:                 store.StartRun,
-		getRun:                   store.GetRun,
-		getRunState:              store.GetRunState,
-		finishRun:                store.FinishRun,
-		saveStep:                 store.SaveStep,
-		createInteraction:        store.CreateInteraction,
-		markRunWaiting:           store.MarkRunWaiting,
-		createRunTurn:            store.CreateRunTurn,
-		markInteractionResponded: store.MarkInteractionResponded,
-		saveObservation:          store.SaveObservation,
+		startRun:            store.StartRun,
+		getRunState:         store.GetRunState,
+		finishRun:           store.FinishRun,
+		saveStep:            store.SaveStep,
+		createInterruption:  store.CreateInterruption,
+		markRunInterrupted:  store.MarkRunInterrupted,
+		resolveInterruption: store.ResolveInterruption,
+		saveObservation:     store.SaveObservation,
+		createChatSession:   store.CreateChatSession,
+		getChatSession:      store.GetChatSession,
+		listChatMessages:    store.ListChatMessages,
+		createChatMessage:   store.CreateChatMessage,
+		activeInterruption:  store.ActiveInterruption,
 	}
 }
 
@@ -184,27 +232,9 @@ type blockingFinishRunStore struct {
 }
 
 func newBlockingFinishRunStore() *blockingFinishRunStore {
-	return &blockingFinishRunStore{finishStarted: make(chan struct{})}
-}
-
-func blockingRunStores(store *blockingFinishRunStore) RunStore {
-	return RunStore{
-		startRun:                 store.StartRun,
-		getRun:                   store.GetRun,
-		getRunState:              store.GetRunState,
-		finishRun:                store.FinishRun,
-		saveStep:                 store.SaveStep,
-		createInteraction:        store.CreateInteraction,
-		markRunWaiting:           store.MarkRunWaiting,
-		createRunTurn:            store.CreateRunTurn,
-		markInteractionResponded: store.MarkInteractionResponded,
-		saveObservation:          store.SaveObservation,
-	}
-}
-
-func (store *blockingFinishRunStore) StartRun(_ context.Context, record CreateRunRecord) (Run, error) {
-	store.run = Run{ID: testRunID, Message: record.Message, Status: RunStatusRunning, StartedAt: time.Now()}
-	return store.run, nil
+	store := &blockingFinishRunStore{finishStarted: make(chan struct{})}
+	store.chats = append(store.chats, ChatSession{ID: "chat_test", Status: ChatSessionStatusOpen})
+	return store
 }
 
 func (store *blockingFinishRunStore) FinishRun(ctx context.Context, run Run) error {
@@ -215,22 +245,19 @@ func (store *blockingFinishRunStore) FinishRun(ctx context.Context, run Run) err
 	return fmt.Errorf("finish wait: %w", ctx.Err())
 }
 
-func (store *blockingFinishRunStore) SaveStep(_ context.Context, _ StepRecord) error {
-	return nil
-}
-
 type runResult struct {
-	response RunResponse
+	response ChatMessageResponse
 	err      error
 }
 
-func TestServiceRunExecutesToolThenFinalAnswer(t *testing.T) {
+//nolint:cyclop // This test verifies chat-message orchestration, tool execution, persistence, and response shape together.
+func TestServiceCreateChatMessageExecutesToolThenAssistantMessage(t *testing.T) {
+	runStore := newChatMemoryRunStore()
 	planner := &fakePlanner{actions: []PlannerAction{
 		{Type: ActionTypeCallTool, Tool: "export_report", Inputs: json.RawMessage(`{"month":"2026-05"}`)},
 		{Type: ActionTypeFinalAnswer, Answer: "done", Outputs: map[string]any{"report_file": "ctx://export_report/file"}},
 	}}
 	executor := &fakeExecutor{observations: []Observation{{Status: StepStatusSucceeded, Outputs: map[string]any{"report_file": "ctx://export_report/file"}}}}
-	runStore := &memoryRunStore{}
 	service := NewService(ServiceConfig{
 		Planner:      planner,
 		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "export_report", TimeoutMS: 1000}}, instructions: toolcatalog.Instructions{Content: "Use tools."}},
@@ -240,58 +267,61 @@ func TestServiceRunExecutesToolThenFinalAnswer(t *testing.T) {
 		TotalTimeout: time.Minute,
 	})
 
-	response, err := service.Run(context.Background(), CreateRunRequest{Message: "export report"})
+	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "export report"})
 
 	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+		t.Fatalf("CreateChatMessage() error = %v", err)
 	}
-	if response.Status != RunStatusSucceeded {
-		t.Fatalf("Status = %q, want succeeded", response.Status)
+	if response.AssistantMessage == nil || response.AssistantMessage.Content != "done" {
+		t.Fatalf("AssistantMessage = %#v, want done", response.AssistantMessage)
 	}
-	if response.Answer != "done" {
-		t.Fatalf("Answer = %q, want done", response.Answer)
+	if response.Run.Status != RunStatusSucceeded || response.Run.Answer != "done" {
+		t.Fatalf("Run = %#v, want succeeded answer", response.Run)
 	}
 	if len(runStore.steps) != 1 {
 		t.Fatalf("saved steps = %d, want 1", len(runStore.steps))
 	}
-	if runStore.steps[0].ToolID != testToolID {
-		t.Fatalf("saved step ToolID = %q, want %s", runStore.steps[0].ToolID, testToolID)
+	if runStore.record.SessionID != "chat_test" || runStore.record.TriggerMessageID == "" {
+		t.Fatalf("CreateRunRecord = %#v, want chat session and trigger message", runStore.record)
 	}
 }
 
-func TestServiceRunFailsOnUnknownToolAfterRetry(t *testing.T) {
+func TestServiceCreateChatMessageFailsOnUnknownToolAfterRetry(t *testing.T) {
+	runStore := newChatMemoryRunStore()
 	planner := &fakePlanner{actions: []PlannerAction{
 		{Type: ActionTypeCallTool, Tool: "missing", Inputs: json.RawMessage(`{}`)},
 		{Type: ActionTypeCallTool, Tool: "missing", Inputs: json.RawMessage(`{}`)},
 	}}
-	service := NewService(ServiceConfig{
-		Planner:      planner,
-		Catalog:      fakeCatalog{},
-		Executor:     &fakeExecutor{},
-		RunStore:     runStores(&memoryRunStore{}),
-		MaxSteps:     8,
-		TotalTimeout: time.Minute,
-	})
+	service := newTestService(planner, runStore)
 
-	response, err := service.Run(context.Background(), CreateRunRequest{Message: "run missing"})
+	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "run missing"})
 
 	if err == nil {
-		t.Fatal("Run() error = nil, want error")
+		t.Fatal("CreateChatMessage() error = nil, want error")
 	}
-	if response.Status != RunStatusFailed {
-		t.Fatalf("Status = %q, want failed", response.Status)
+	if response.Run.Status != RunStatusFailed {
+		t.Fatalf("Status = %q, want failed", response.Run.Status)
 	}
 }
 
-func TestServiceRunBoundsFailedRunPersistence(t *testing.T) {
+func TestServiceCreateChatMessageBoundsFailedRunPersistence(t *testing.T) {
 	const cleanupTimeout = 20 * time.Millisecond
 
 	runStore := newBlockingFinishRunStore()
-	service := newServiceWithFailedRunFinishTimeout(runStore, cleanupTimeout)
+	service := NewService(ServiceConfig{
+		Planner:      &fakePlanner{},
+		Catalog:      fakeCatalog{},
+		Executor:     &fakeExecutor{},
+		RunStore:     runStores(&runStore.memoryRunStore),
+		MaxSteps:     8,
+		TotalTimeout: time.Minute,
+	})
+	service.runStore.finishRun = runStore.FinishRun
+	service.failedRunFinishTimeout = cleanupTimeout
 
 	done := make(chan runResult, 1)
 	go func() {
-		response, err := service.Run(context.Background(), CreateRunRequest{Message: "run fails"})
+		response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "run fails"})
 		done <- runResult{response: response, err: err}
 	}()
 
@@ -303,19 +333,6 @@ func TestServiceRunBoundsFailedRunPersistence(t *testing.T) {
 
 	requireFailedRunFinishContext(t, runStore)
 	requireFailedRunReturned(t, done)
-}
-
-func newServiceWithFailedRunFinishTimeout(runStore *blockingFinishRunStore, timeout time.Duration) Service {
-	service := NewService(ServiceConfig{
-		Planner:      &fakePlanner{},
-		Catalog:      fakeCatalog{},
-		Executor:     &fakeExecutor{},
-		RunStore:     blockingRunStores(runStore),
-		MaxSteps:     8,
-		TotalTimeout: time.Minute,
-	})
-	service.failedRunFinishTimeout = timeout
-	return service
 }
 
 func requireFailedRunFinishContext(t *testing.T, runStore *blockingFinishRunStore) {
@@ -334,57 +351,23 @@ func requireFailedRunReturned(t *testing.T, done <-chan runResult) {
 	select {
 	case result := <-done:
 		if result.err == nil {
-			t.Fatal("Run() error = nil, want planner error joined with cleanup deadline")
+			t.Fatal("CreateChatMessage() error = nil, want planner error joined with cleanup deadline")
 		}
 		if !errors.Is(result.err, context.DeadlineExceeded) {
-			t.Fatalf("Run() error = %v, want context deadline exceeded", result.err)
+			t.Fatalf("CreateChatMessage() error = %v, want context deadline exceeded", result.err)
 		}
-		if result.response.Status != RunStatusFailed {
-			t.Fatalf("response status = %q, want failed", result.response.Status)
+		if result.response.Run.Status != RunStatusFailed {
+			t.Fatalf("response status = %q, want failed", result.response.Run.Status)
 		}
 	case <-time.After(250 * time.Millisecond):
-		t.Fatal("Run() did not return after failed-run cleanup timeout")
+		t.Fatal("CreateChatMessage() did not return after failed-run cleanup timeout")
 	}
 }
 
-func TestServiceRunAuditsUnknownToolAttempt(t *testing.T) {
-	runStore := &memoryRunStore{}
-	planner := &fakePlanner{actions: []PlannerAction{
-		{Type: ActionTypeCallTool, Tool: "missing", Inputs: json.RawMessage(`{}`)},
-		{Type: ActionTypeFinalAnswer, Answer: "cannot continue"},
-	}}
-	service := NewService(ServiceConfig{
-		Planner:      planner,
-		Catalog:      fakeCatalog{},
-		Executor:     &fakeExecutor{},
-		RunStore:     runStores(runStore),
-		MaxSteps:     8,
-		TotalTimeout: time.Minute,
-	})
-
-	_, err := service.Run(context.Background(), CreateRunRequest{Message: "run missing"})
-
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if len(runStore.steps) != 1 {
-		t.Fatalf("saved steps = %d, want 1", len(runStore.steps))
-	}
-	if runStore.steps[0].Status != StepStatusFailed {
-		t.Fatalf("step status = %q, want failed", runStore.steps[0].Status)
-	}
-}
-
-func TestServiceRunPassesAttachmentsToPlanner(t *testing.T) {
+func TestServiceCreateChatMessagePassesAttachmentsToPlanner(t *testing.T) {
+	runStore := newChatMemoryRunStore()
 	planner := &fakePlanner{actions: []PlannerAction{{Type: ActionTypeFinalAnswer, Answer: "done"}}}
-	service := NewService(ServiceConfig{
-		Planner:      planner,
-		Catalog:      fakeCatalog{},
-		Executor:     &fakeExecutor{},
-		RunStore:     runStores(&memoryRunStore{}),
-		MaxSteps:     8,
-		TotalTimeout: time.Minute,
-	})
+	service := newTestService(planner, runStore)
 	attachments := []Attachment{{
 		ID:       "att_pdf",
 		Filename: "merchant_catalog.pdf",
@@ -394,10 +377,10 @@ func TestServiceRunPassesAttachmentsToPlanner(t *testing.T) {
 		Data:     "JVBERi0xLjc=",
 	}}
 
-	_, err := service.Run(context.Background(), CreateRunRequest{Message: "update catalog", Attachments: attachments})
+	_, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "update catalog", Attachments: attachments})
 
 	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+		t.Fatalf("CreateChatMessage() error = %v", err)
 	}
 	if len(planner.requests) != 1 {
 		t.Fatalf("len(planner.requests) = %d, want 1", len(planner.requests))
@@ -410,8 +393,8 @@ func TestServiceRunPassesAttachmentsToPlanner(t *testing.T) {
 	}
 }
 
-func TestServiceRunWaitsForUserOnAskUser(t *testing.T) {
-	runStore := &memoryRunStore{}
+func TestServiceCreateChatMessageCreatesInterruptionAndAssistantMessage(t *testing.T) {
+	runStore := newChatMemoryRunStore()
 	planner := &fakePlanner{actions: []PlannerAction{{
 		Type:    ActionTypeAskUser,
 		Message: "Which account should I use?",
@@ -419,46 +402,26 @@ func TestServiceRunWaitsForUserOnAskUser(t *testing.T) {
 	}}}
 	service := newTestService(planner, runStore)
 
-	response, err := service.Run(context.Background(), CreateRunRequest{Message: "delete duplicate"})
+	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "delete duplicate"})
 	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+		t.Fatalf("CreateChatMessage() error = %v", err)
 	}
-	if response.Status != RunStatusWaitingForUser {
-		t.Fatalf("Status = %q, want waiting_for_user", response.Status)
+	if response.Run.Status != RunStatusInterrupted {
+		t.Fatalf("Status = %q, want interrupted", response.Run.Status)
 	}
-	if response.Interaction == nil || response.Interaction.Message != "Which account should I use?" {
-		t.Fatalf("Interaction = %#v, want planner interaction", response.Interaction)
+	if response.Interruption == nil || response.Interruption.Message != "Which account should I use?" {
+		t.Fatalf("Interruption = %#v, want planner interruption", response.Interruption)
 	}
-	if runStore.waitingRun.Status != RunStatusWaitingForUser {
-		t.Fatalf("waitingRun.Status = %q, want waiting_for_user", runStore.waitingRun.Status)
+	if response.AssistantMessage == nil || response.AssistantMessage.Content != "Which account should I use?" {
+		t.Fatalf("AssistantMessage = %#v, want interruption message", response.AssistantMessage)
+	}
+	if runStore.waitingRun.Status != RunStatusInterrupted {
+		t.Fatalf("waitingRun.Status = %q, want interrupted", runStore.waitingRun.Status)
 	}
 }
 
-func TestServiceCreateRunTurnContinuesSameRunWithAttachments(t *testing.T) {
-	runStore := newWaitingMemoryRunStore()
-	planner := &fakePlanner{actions: []PlannerAction{{Type: ActionTypeFinalAnswer, Answer: "continued"}}}
-	service := newTestService(planner, runStore)
-	attachments := []Attachment{{
-		ID:       "att_turn",
-		Filename: "accounts.csv",
-		MIMEType: "text/csv",
-		Kind:     AttachmentKindCSV,
-		Size:     7,
-		Data:     "YSxiCg==",
-	}}
-
-	response, err := service.CreateRunTurn(context.Background(), testRunID, CreateRunTurnRequest{Message: "use this file", Attachments: attachments})
-	if err != nil {
-		t.Fatalf("CreateRunTurn() error = %v", err)
-	}
-	if response.RunID != testRunID || response.Status != RunStatusSucceeded {
-		t.Fatalf("response = %#v, want same run succeeded", response)
-	}
-	requirePlannerSawRunTurn(t, planner)
-}
-
-func TestServiceCreateRunTurnContinuesWithPriorObservationsAndStepOrder(t *testing.T) {
-	runStore := newWaitingMemoryRunStore()
+func TestServiceCreateChatMessageResumesInterruptedRunWithAttachmentsAndObservations(t *testing.T) {
+	runStore := newInterruptedMemoryRunStore()
 	runStore.observations = []Observation{{
 		StepOrder: 1,
 		ToolName:  "lookup_account",
@@ -478,33 +441,125 @@ func TestServiceCreateRunTurnContinuesWithPriorObservationsAndStepOrder(t *testi
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
 	})
+	attachments := []Attachment{{ID: "att_turn", Filename: "accounts.csv", MIMEType: "text/csv", Kind: AttachmentKindCSV, Size: 7, Data: "YSxiCg=="}}
 
-	response, err := service.CreateRunTurn(context.Background(), testRunID, CreateRunTurnRequest{Message: "ok"})
+	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "ok", Attachments: attachments})
 	if err != nil {
-		t.Fatalf("CreateRunTurn() error = %v", err)
+		t.Fatalf("CreateChatMessage() error = %v", err)
 	}
-	if response.Status != RunStatusSucceeded {
-		t.Fatalf("Status = %q, want succeeded", response.Status)
+	if response.Run.RunID != testRunID || response.Run.Status != RunStatusSucceeded {
+		t.Fatalf("Run = %#v, want same run succeeded", response.Run)
 	}
-	if len(planner.requests) == 0 || len(planner.requests[0].Observations) != 1 {
-		t.Fatalf("planner observations = %#v, want prior observation", planner.requests)
-	}
+	requirePlannerSawInterruptionResume(t, planner)
 	if len(runStore.steps) != 1 || runStore.steps[0].StepOrder != 2 {
 		t.Fatalf("saved steps = %#v, want resumed step order 2", runStore.steps)
 	}
+	if runStore.interruptions[0].Status != InterruptionStatusResolved {
+		t.Fatalf("interruption status = %q, want resolved", runStore.interruptions[0].Status)
+	}
 }
 
-func requirePlannerSawRunTurn(t *testing.T, planner *fakePlanner) {
+func requirePlannerSawInterruptionResume(t *testing.T, planner *fakePlanner) {
 	t.Helper()
 
-	if len(planner.requests) != 1 || planner.requests[0].Message != "use this file" {
-		t.Fatalf("planner requests = %#v, want user turn message", planner.requests)
+	if len(planner.requests) == 0 || planner.requests[0].Message != "ok" {
+		t.Fatalf("planner requests = %#v, want resume message", planner.requests)
 	}
-	if planner.requests[0].Interaction == nil || planner.requests[0].Interaction.Message != "Which account should I use?" {
-		t.Fatalf("planner interaction = %#v, want pending interaction context", planner.requests[0].Interaction)
+	if planner.requests[0].Interruption == nil || planner.requests[0].Interruption.Message != "Which account should I use?" {
+		t.Fatalf("planner interruption = %#v, want interruption context", planner.requests[0].Interruption)
+	}
+	if len(planner.requests[0].Observations) != 1 {
+		t.Fatalf("planner observations = %#v, want prior observation", planner.requests[0].Observations)
 	}
 	if len(planner.requests[0].Attachments) != 1 {
 		t.Fatalf("planner attachments = %d, want 1", len(planner.requests[0].Attachments))
+	}
+}
+
+func TestServiceCreateChatMessageFailsAtStepLimit(t *testing.T) {
+	runStore := newChatMemoryRunStore()
+	planner := &fakePlanner{actions: []PlannerAction{
+		{Type: ActionTypeCallTool, Tool: "export_report", Inputs: json.RawMessage(`{}`)},
+		{Type: ActionTypeCallTool, Tool: "export_report", Inputs: json.RawMessage(`{}`)},
+	}}
+	executor := &fakeExecutor{observations: []Observation{
+		{Status: StepStatusSucceeded},
+		{Status: StepStatusSucceeded},
+	}}
+	service := NewService(ServiceConfig{
+		Planner:      planner,
+		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "export_report", TimeoutMS: 1000}}},
+		Executor:     executor,
+		RunStore:     runStores(runStore),
+		MaxSteps:     1,
+		TotalTimeout: time.Minute,
+	})
+
+	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "too many"})
+
+	if err == nil {
+		t.Fatal("CreateChatMessage() error = nil, want step limit error")
+	}
+	if response.Run.Status != RunStatusFailed {
+		t.Fatalf("Status = %q, want failed", response.Run.Status)
+	}
+}
+
+func TestServiceCreateChatMessageAllowsOneBusinessErrorFollowUp(t *testing.T) {
+	runStore := newChatMemoryRunStore()
+	planner := &fakePlanner{actions: []PlannerAction{
+		{Type: ActionTypeCallTool, Tool: "find_partner", Inputs: json.RawMessage(`{"partner_name":"missing"}`)},
+		{Type: ActionTypeFinalAnswer, Answer: "partner not found"},
+	}}
+	executor := &fakeExecutor{observations: []Observation{{Status: StepStatusFailed, Error: "partner_not_found"}}}
+	service := NewService(ServiceConfig{
+		Planner:      planner,
+		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "find_partner", TimeoutMS: 1000}}},
+		Executor:     executor,
+		RunStore:     runStores(runStore),
+		MaxSteps:     8,
+		TotalTimeout: time.Minute,
+	})
+
+	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "export missing partner"})
+
+	if err != nil {
+		t.Fatalf("CreateChatMessage() error = %v", err)
+	}
+	if response.AssistantMessage == nil || response.AssistantMessage.Content != "partner not found" {
+		t.Fatalf("AssistantMessage = %#v, want partner not found", response.AssistantMessage)
+	}
+	if len(runStore.steps) != 1 || runStore.steps[0].Status != StepStatusFailed {
+		t.Fatalf("saved steps = %#v, want one failed step", runStore.steps)
+	}
+}
+
+func TestServiceCreateChatMessageFailsRepeatedBusinessError(t *testing.T) {
+	runStore := newChatMemoryRunStore()
+	planner := &fakePlanner{actions: []PlannerAction{
+		{Type: ActionTypeCallTool, Tool: "find_partner", Inputs: json.RawMessage(`{"partner_name":"missing"}`)},
+		{Type: ActionTypeCallTool, Tool: "find_partner", Inputs: json.RawMessage(`{"partner_name":"missing"}`)},
+	}}
+	executor := &fakeExecutor{observations: []Observation{
+		{Status: StepStatusFailed, Error: "partner_not_found"},
+		{Status: StepStatusFailed, Error: "partner_not_found"},
+	}}
+	service := NewService(ServiceConfig{
+		Planner:      planner,
+		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "find_partner", TimeoutMS: 1000}}},
+		Executor:     executor,
+		RunStore:     runStores(runStore),
+		MaxSteps:     8,
+		TotalTimeout: time.Minute,
+	})
+
+	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "export missing partner"})
+
+	if err == nil {
+		t.Fatal("CreateChatMessage() error = nil, want repeated business error")
+	}
+	if response.Run.Status != RunStatusFailed {
+		t.Fatalf("Status = %q, want failed", response.Run.Status)
 	}
 }
 
@@ -519,100 +574,22 @@ func newTestService(planner Planner, runStore *memoryRunStore) Service {
 	})
 }
 
-func newWaitingMemoryRunStore() *memoryRunStore {
+func newChatMemoryRunStore() *memoryRunStore {
 	return &memoryRunStore{
-		run: Run{ID: testRunID, Message: "delete duplicate", Status: RunStatusWaitingForUser, StartedAt: time.Now()},
-		interactions: []Interaction{{
-			ID:      "int_test",
-			RunID:   testRunID,
-			Type:    InteractionTypeUserInput,
-			Status:  InteractionStatusPending,
-			Message: "Which account should I use?",
-		}},
+		chats: []ChatSession{{ID: "chat_test", Status: ChatSessionStatusOpen, CreatedAt: time.Now(), UpdatedAt: time.Now()}},
 	}
 }
 
-func TestServiceRunFailsAtStepLimit(t *testing.T) {
-	planner := &fakePlanner{actions: []PlannerAction{
-		{Type: ActionTypeCallTool, Tool: "export_report", Inputs: json.RawMessage(`{}`)},
-		{Type: ActionTypeCallTool, Tool: "export_report", Inputs: json.RawMessage(`{}`)},
+func newInterruptedMemoryRunStore() *memoryRunStore {
+	store := newChatMemoryRunStore()
+	store.run = Run{ID: testRunID, SessionID: "chat_test", Status: RunStatusInterrupted, StartedAt: time.Now()}
+	store.interruptions = []Interruption{{
+		ID:        "int_test",
+		SessionID: "chat_test",
+		RunID:     testRunID,
+		Type:      InterruptionTypeInputRequest,
+		Status:    InterruptionStatusAwaitingReview,
+		Message:   "Which account should I use?",
 	}}
-	executor := &fakeExecutor{observations: []Observation{
-		{Status: StepStatusSucceeded},
-		{Status: StepStatusSucceeded},
-	}}
-	service := NewService(ServiceConfig{
-		Planner:      planner,
-		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "export_report", TimeoutMS: 1000}}},
-		Executor:     executor,
-		RunStore:     runStores(&memoryRunStore{}),
-		MaxSteps:     1,
-		TotalTimeout: time.Minute,
-	})
-
-	response, err := service.Run(context.Background(), CreateRunRequest{Message: "too many"})
-
-	if err == nil {
-		t.Fatal("Run() error = nil, want step limit error")
-	}
-	if response.Status != RunStatusFailed {
-		t.Fatalf("Status = %q, want failed", response.Status)
-	}
-}
-
-func TestServiceRunAllowsOneBusinessErrorFollowUp(t *testing.T) {
-	planner := &fakePlanner{actions: []PlannerAction{
-		{Type: ActionTypeCallTool, Tool: "find_partner", Inputs: json.RawMessage(`{"partner_name":"missing"}`)},
-		{Type: ActionTypeFinalAnswer, Answer: "partner not found"},
-	}}
-	executor := &fakeExecutor{observations: []Observation{{Status: StepStatusFailed, Error: "partner_not_found"}}}
-	runStore := &memoryRunStore{}
-	service := NewService(ServiceConfig{
-		Planner:      planner,
-		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "find_partner", TimeoutMS: 1000}}},
-		Executor:     executor,
-		RunStore:     runStores(runStore),
-		MaxSteps:     8,
-		TotalTimeout: time.Minute,
-	})
-
-	response, err := service.Run(context.Background(), CreateRunRequest{Message: "export missing partner"})
-
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if response.Answer != "partner not found" {
-		t.Fatalf("Answer = %q, want partner not found", response.Answer)
-	}
-	if len(runStore.steps) != 1 || runStore.steps[0].Status != StepStatusFailed {
-		t.Fatalf("saved steps = %#v, want one failed step", runStore.steps)
-	}
-}
-
-func TestServiceRunFailsRepeatedBusinessError(t *testing.T) {
-	planner := &fakePlanner{actions: []PlannerAction{
-		{Type: ActionTypeCallTool, Tool: "find_partner", Inputs: json.RawMessage(`{"partner_name":"missing"}`)},
-		{Type: ActionTypeCallTool, Tool: "find_partner", Inputs: json.RawMessage(`{"partner_name":"missing"}`)},
-	}}
-	executor := &fakeExecutor{observations: []Observation{
-		{Status: StepStatusFailed, Error: "partner_not_found"},
-		{Status: StepStatusFailed, Error: "partner_not_found"},
-	}}
-	service := NewService(ServiceConfig{
-		Planner:      planner,
-		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "find_partner", TimeoutMS: 1000}}},
-		Executor:     executor,
-		RunStore:     runStores(&memoryRunStore{}),
-		MaxSteps:     8,
-		TotalTimeout: time.Minute,
-	})
-
-	response, err := service.Run(context.Background(), CreateRunRequest{Message: "export missing partner"})
-
-	if err == nil {
-		t.Fatal("Run() error = nil, want repeated business error")
-	}
-	if response.Status != RunStatusFailed {
-		t.Fatalf("Status = %q, want failed", response.Status)
-	}
+	return store
 }

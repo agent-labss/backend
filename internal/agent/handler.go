@@ -12,7 +12,10 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
-const errorField = "error"
+const (
+	errorField                  = "error"
+	messageOrAttachmentRequired = "message or attachment is required"
+)
 
 var (
 	errInvalidJSONRequestBody      = errors.New("invalid JSON request body")
@@ -20,66 +23,75 @@ var (
 	errInvalidMultipartFile        = errors.New("invalid multipart file")
 )
 
-type Runner interface {
-	Run(ctx context.Context, request CreateRunRequest) (RunResponse, error)
-	GetRun(ctx context.Context, runID string) (RunResponse, error)
-	CreateRunTurn(ctx context.Context, runID string, request CreateRunTurnRequest) (RunResponse, error)
+type ChatSessionService interface {
+	CreateChat(ctx context.Context, request CreateChatRequest) (ChatSession, error)
+	GetChat(ctx context.Context, chatID string) (ChatSession, error)
+}
+
+type ChatMessageService interface {
+	ListChatMessages(ctx context.Context, chatID string) ([]ChatMessage, error)
+	CreateChatMessage(ctx context.Context, chatID string, request CreateChatMessageRequest) (ChatMessageResponse, error)
 }
 
 type Handler struct {
-	runner       Runner
+	chatSessions ChatSessionService
+	chatMessages ChatMessageService
 	uploadConfig UploadConfig
 }
 
-func NewHandler(runner Runner, uploadConfigs ...UploadConfig) Handler {
+func NewHandler(chatSessions ChatSessionService, chatMessages ChatMessageService, uploadConfigs ...UploadConfig) Handler {
 	config := UploadConfig{MaxFiles: 5, MaxFileBytes: 10 * 1024 * 1024, MaxTotalBytes: 25 * 1024 * 1024}
 	if len(uploadConfigs) > 0 {
 		config = uploadConfigs[0]
 	}
 
-	return Handler{runner: runner, uploadConfig: config}
+	return Handler{chatSessions: chatSessions, chatMessages: chatMessages, uploadConfig: config}
 }
 
-func (handler Handler) CreateRun(c fiber.Ctx) error {
-	input, err := handler.userInputRequest(c)
-	if err != nil {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: err.Error()})
-	}
-	if strings.TrimSpace(input.Message) == "" {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: "message is required"})
+func (handler Handler) CreateChat(c fiber.Ctx) error {
+	var request CreateChatRequest
+	if err := c.Bind().Body(&request); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: errInvalidJSONRequestBody.Error()})
 	}
 
-	request := CreateRunRequest(input)
-	response, err := handler.runner.Run(c.Context(), request)
+	response, err := handler.chatSessions.CreateChat(c.Context(), request)
 	if err != nil {
-		return writeRunError(c, response, err)
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{errorField: "create chat failed"})
+	}
+
+	return c.Status(http.StatusCreated).JSON(response)
+}
+
+func (handler Handler) GetChat(c fiber.Ctx) error {
+	response, err := handler.chatSessions.GetChat(c.Context(), c.Params("chat_id"))
+	if err != nil {
+		return writeChatError(c, err)
 	}
 
 	return c.Status(http.StatusOK).JSON(response)
 }
 
-func (handler Handler) GetRun(c fiber.Ctx) error {
-	response, err := handler.runner.GetRun(c.Context(), c.Params("run_id"))
+func (handler Handler) ListChatMessages(c fiber.Ctx) error {
+	response, err := handler.chatMessages.ListChatMessages(c.Context(), c.Params("chat_id"))
 	if err != nil {
-		return writeRunError(c, response, err)
+		return writeChatError(c, err)
 	}
 
 	return c.Status(http.StatusOK).JSON(response)
 }
 
-func (handler Handler) CreateRunTurn(c fiber.Ctx) error {
+func (handler Handler) CreateChatMessage(c fiber.Ctx) error {
 	input, err := handler.userInputRequest(c)
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: err.Error()})
 	}
 	if strings.TrimSpace(input.Message) == "" && len(input.Attachments) == 0 {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: "message or attachment is required"})
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{errorField: messageOrAttachmentRequired})
 	}
 
-	request := CreateRunTurnRequest(input)
-	response, err := handler.runner.CreateRunTurn(c.Context(), c.Params("run_id"), request)
+	response, err := handler.chatMessages.CreateChatMessage(c.Context(), c.Params("chat_id"), CreateChatMessageRequest(input))
 	if err != nil {
-		return writeRunError(c, response, err)
+		return writeChatError(c, err)
 	}
 
 	return c.Status(http.StatusOK).JSON(response)
@@ -167,16 +179,13 @@ func uploadedFilesFromForm(form *multipart.Form) ([]UploadedFile, error) {
 	return files, nil
 }
 
-func writeRunError(c fiber.Ctx, response RunResponse, err error) error {
+func writeChatError(c fiber.Ctx, err error) error {
+	if errors.Is(err, ErrChatSessionNotFound) {
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{errorField: ErrChatSessionNotFound.Error()})
+	}
 	if errors.Is(err, ErrRunNotFound) {
 		return c.Status(http.StatusNotFound).JSON(fiber.Map{errorField: ErrRunNotFound.Error()})
 	}
-	if errors.Is(err, ErrRunNotWaiting) {
-		return c.Status(http.StatusConflict).JSON(fiber.Map{errorField: ErrRunNotWaiting.Error()})
-	}
-	if response.Status == RunStatusFailed {
-		return c.Status(http.StatusBadRequest).JSON(response)
-	}
 
-	return c.Status(http.StatusInternalServerError).JSON(fiber.Map{errorField: "agent run failed"})
+	return c.Status(http.StatusInternalServerError).JSON(fiber.Map{errorField: "chat message failed"})
 }

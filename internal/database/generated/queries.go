@@ -5,7 +5,9 @@ package generated
 import (
 	"ai/backend/internal/database"
 	"context"
+	"database/sql"
 	"strings"
+	"time"
 
 	"gorm.io/cli/gorm/typed"
 	"gorm.io/gorm"
@@ -61,6 +63,7 @@ func AgentInstructionQueries[T any](db *gorm.DB, opts ...clause.Expression) _Age
 type _AgentInstructionQueriesInterface[T any] interface {
 	typed.Interface[T]
 	GetByID(ctx context.Context, id int) (database.AgentInstruction, error)
+	UpsertByID(ctx context.Context, id int, content string, updatedAt time.Time) error
 }
 
 type _AgentInstructionQueriesImpl[T any] struct {
@@ -79,6 +82,16 @@ func (e _AgentInstructionQueriesImpl[T]) GetByID(ctx context.Context, id int) (d
 	return result, err
 }
 
+func (e _AgentInstructionQueriesImpl[T]) UpsertByID(ctx context.Context, id int, content string, updatedAt time.Time) error {
+	var sb strings.Builder
+	_params := make([]any, 0, 4)
+
+	sb.WriteString("INSERT INTO ? (id, content, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, id, content, updatedAt)
+
+	return e.Exec(ctx, sb.String(), _params...)
+}
+
 func AgentRunQueries[T any](db *gorm.DB, opts ...clause.Expression) _AgentRunQueriesInterface[T] {
 	return _AgentRunQueriesImpl[T]{
 		Interface: typed.G[T](db, opts...),
@@ -88,6 +101,8 @@ func AgentRunQueries[T any](db *gorm.DB, opts ...clause.Expression) _AgentRunQue
 type _AgentRunQueriesInterface[T any] interface {
 	typed.Interface[T]
 	GetByID(ctx context.Context, id string) (database.AgentRun, error)
+	FinishByID(ctx context.Context, status string, errorSummary string, finishedAt sql.NullTime, id string) error
+	MarkInterruptedByID(ctx context.Context, status string, id string) error
 }
 
 type _AgentRunQueriesImpl[T any] struct {
@@ -104,6 +119,26 @@ func (e _AgentRunQueriesImpl[T]) GetByID(ctx context.Context, id string) (databa
 	var result database.AgentRun
 	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
 	return result, err
+}
+
+func (e _AgentRunQueriesImpl[T]) FinishByID(ctx context.Context, status string, errorSummary string, finishedAt sql.NullTime, id string) error {
+	var sb strings.Builder
+	_params := make([]any, 0, 5)
+
+	sb.WriteString("UPDATE ? SET status = ?, error_summary = ?, finished_at = ? WHERE id = ?")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, status, errorSummary, finishedAt, id)
+
+	return e.Exec(ctx, sb.String(), _params...)
+}
+
+func (e _AgentRunQueriesImpl[T]) MarkInterruptedByID(ctx context.Context, status string, id string) error {
+	var sb strings.Builder
+	_params := make([]any, 0, 3)
+
+	sb.WriteString("UPDATE ? SET status = ?, error_summary = '', finished_at = NULL WHERE id = ?")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, status, id)
+
+	return e.Exec(ctx, sb.String(), _params...)
 }
 
 func AgentRunStepQueries[T any](db *gorm.DB, opts ...clause.Expression) _AgentRunStepQueriesInterface[T] {
@@ -129,6 +164,189 @@ func (e _AgentRunStepQueriesImpl[T]) GetByID(ctx context.Context, id string) (da
 	_params = append(_params, clause.Table{Name: clause.CurrentTable}, id)
 
 	var result database.AgentRunStep
+	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
+	return result, err
+}
+
+func ChatSessionQueries[T any](db *gorm.DB, opts ...clause.Expression) _ChatSessionQueriesInterface[T] {
+	return _ChatSessionQueriesImpl[T]{
+		Interface: typed.G[T](db, opts...),
+	}
+}
+
+type _ChatSessionQueriesInterface[T any] interface {
+	typed.Interface[T]
+	GetByID(ctx context.Context, id string) (database.ChatSession, error)
+	UpdateUpdatedAtByID(ctx context.Context, updatedAt time.Time, id string) error
+}
+
+type _ChatSessionQueriesImpl[T any] struct {
+	typed.Interface[T]
+}
+
+func (e _ChatSessionQueriesImpl[T]) GetByID(ctx context.Context, id string) (database.ChatSession, error) {
+	var sb strings.Builder
+	_params := make([]any, 0, 2)
+
+	sb.WriteString("SELECT * FROM ? WHERE id = ? LIMIT 1")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, id)
+
+	var result database.ChatSession
+	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
+	return result, err
+}
+
+func (e _ChatSessionQueriesImpl[T]) UpdateUpdatedAtByID(ctx context.Context, updatedAt time.Time, id string) error {
+	var sb strings.Builder
+	_params := make([]any, 0, 3)
+
+	sb.WriteString("UPDATE ? SET updated_at = ? WHERE id = ?")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, updatedAt, id)
+
+	return e.Exec(ctx, sb.String(), _params...)
+}
+
+func ChatMessageQueries[T any](db *gorm.DB, opts ...clause.Expression) _ChatMessageQueriesInterface[T] {
+	return _ChatMessageQueriesImpl[T]{
+		Interface: typed.G[T](db, opts...),
+	}
+}
+
+type _ChatMessageQueriesInterface[T any] interface {
+	typed.Interface[T]
+	ListBySessionID(ctx context.Context, sessionID string) ([]database.ChatMessage, error)
+	MaxSequenceBySessionID(ctx context.Context, sessionID string) (int, error)
+}
+
+type _ChatMessageQueriesImpl[T any] struct {
+	typed.Interface[T]
+}
+
+func (e _ChatMessageQueriesImpl[T]) ListBySessionID(ctx context.Context, sessionID string) ([]database.ChatMessage, error) {
+	var sb strings.Builder
+	_params := make([]any, 0, 2)
+
+	sb.WriteString("SELECT * FROM ? WHERE session_id = ? ORDER BY sequence ASC")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, sessionID)
+
+	var result []database.ChatMessage
+	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
+	return result, err
+}
+
+func (e _ChatMessageQueriesImpl[T]) MaxSequenceBySessionID(ctx context.Context, sessionID string) (int, error) {
+	var sb strings.Builder
+	_params := make([]any, 0, 2)
+
+	sb.WriteString("SELECT COALESCE(MAX(sequence), 0) FROM ? WHERE session_id = ?")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, sessionID)
+
+	var result int
+	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
+	return result, err
+}
+
+func ChatAttachmentQueries[T any](db *gorm.DB, opts ...clause.Expression) _ChatAttachmentQueriesInterface[T] {
+	return _ChatAttachmentQueriesImpl[T]{
+		Interface: typed.G[T](db, opts...),
+	}
+}
+
+type _ChatAttachmentQueriesInterface[T any] interface {
+	typed.Interface[T]
+	ListBySessionID(ctx context.Context, sessionID string) ([]database.ChatAttachment, error)
+}
+
+type _ChatAttachmentQueriesImpl[T any] struct {
+	typed.Interface[T]
+}
+
+func (e _ChatAttachmentQueriesImpl[T]) ListBySessionID(ctx context.Context, sessionID string) ([]database.ChatAttachment, error) {
+	var sb strings.Builder
+	_params := make([]any, 0, 2)
+
+	sb.WriteString("SELECT * FROM ? WHERE session_id = ? ORDER BY created_at ASC")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, sessionID)
+
+	var result []database.ChatAttachment
+	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
+	return result, err
+}
+
+func AgentInterruptionQueries[T any](db *gorm.DB, opts ...clause.Expression) _AgentInterruptionQueriesInterface[T] {
+	return _AgentInterruptionQueriesImpl[T]{
+		Interface: typed.G[T](db, opts...),
+	}
+}
+
+type _AgentInterruptionQueriesInterface[T any] interface {
+	typed.Interface[T]
+	ListByRunID(ctx context.Context, runID string) ([]database.AgentInterruption, error)
+	ActiveBySessionID(ctx context.Context, sessionID string, status string) (database.AgentInterruption, error)
+	ResolveAwaitingByID(ctx context.Context, status string, messageID string, resolvedAt sql.NullTime, id string, awaitingStatus string) error
+}
+
+type _AgentInterruptionQueriesImpl[T any] struct {
+	typed.Interface[T]
+}
+
+func (e _AgentInterruptionQueriesImpl[T]) ListByRunID(ctx context.Context, runID string) ([]database.AgentInterruption, error) {
+	var sb strings.Builder
+	_params := make([]any, 0, 2)
+
+	sb.WriteString("SELECT * FROM ? WHERE run_id = ? ORDER BY created_at ASC")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, runID)
+
+	var result []database.AgentInterruption
+	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
+	return result, err
+}
+
+func (e _AgentInterruptionQueriesImpl[T]) ActiveBySessionID(ctx context.Context, sessionID string, status string) (database.AgentInterruption, error) {
+	var sb strings.Builder
+	_params := make([]any, 0, 3)
+
+	sb.WriteString("SELECT * FROM ? WHERE session_id = ? AND status = ? ORDER BY created_at DESC LIMIT 1")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, sessionID, status)
+
+	var result database.AgentInterruption
+	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
+	return result, err
+}
+
+func (e _AgentInterruptionQueriesImpl[T]) ResolveAwaitingByID(ctx context.Context, status string, messageID string, resolvedAt sql.NullTime, id string, awaitingStatus string) error {
+	var sb strings.Builder
+	_params := make([]any, 0, 6)
+
+	sb.WriteString("UPDATE ? SET status = ?, response_message_id = ?, resolved_at = ? WHERE id = ? AND status = ?")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, status, messageID, resolvedAt, id, awaitingStatus)
+
+	return e.Exec(ctx, sb.String(), _params...)
+}
+
+func AgentRunObservationQueries[T any](db *gorm.DB, opts ...clause.Expression) _AgentRunObservationQueriesInterface[T] {
+	return _AgentRunObservationQueriesImpl[T]{
+		Interface: typed.G[T](db, opts...),
+	}
+}
+
+type _AgentRunObservationQueriesInterface[T any] interface {
+	typed.Interface[T]
+	ListByRunID(ctx context.Context, runID string) ([]database.AgentRunObservation, error)
+}
+
+type _AgentRunObservationQueriesImpl[T any] struct {
+	typed.Interface[T]
+}
+
+func (e _AgentRunObservationQueriesImpl[T]) ListByRunID(ctx context.Context, runID string) ([]database.AgentRunObservation, error) {
+	var sb strings.Builder
+	_params := make([]any, 0, 2)
+
+	sb.WriteString("SELECT * FROM ? WHERE run_id = ? ORDER BY step_order ASC, created_at ASC")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, runID)
+
+	var result []database.AgentRunObservation
 	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
 	return result, err
 }

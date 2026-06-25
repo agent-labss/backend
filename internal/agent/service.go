@@ -12,6 +12,8 @@ import (
 
 var ErrRunFailed = errors.New("agent run failed")
 
+var errAssistantMessageEmpty = errors.New("assistant message is empty")
+
 const defaultFailedRunFinishTimeout = 5 * time.Second
 
 type Catalog interface {
@@ -33,30 +35,36 @@ type ServiceConfig struct {
 }
 
 type RunStore struct {
-	startRun                 func(ctx context.Context, record CreateRunRecord) (Run, error)
-	getRun                   func(ctx context.Context, runID string) (RunResponse, error)
-	getRunState              func(ctx context.Context, runID string) (RunStateRecord, error)
-	finishRun                func(ctx context.Context, run Run) error
-	saveStep                 func(ctx context.Context, step StepRecord) error
-	createInteraction        func(ctx context.Context, interaction Interaction) (Interaction, error)
-	markRunWaiting           func(ctx context.Context, run Run, interaction Interaction) error
-	createRunTurn            func(ctx context.Context, record CreateRunTurnRecord) (RunTurn, error)
-	markInteractionResponded func(ctx context.Context, interactionID string, turnID string) error
-	saveObservation          func(ctx context.Context, record ObservationRecord) error
+	startRun            func(ctx context.Context, record CreateRunRecord) (Run, error)
+	getRunState         func(ctx context.Context, runID string) (RunStateRecord, error)
+	finishRun           func(ctx context.Context, run Run) error
+	saveStep            func(ctx context.Context, step StepRecord) error
+	createInterruption  func(ctx context.Context, interruption Interruption) (Interruption, error)
+	markRunInterrupted  func(ctx context.Context, run Run, interruption Interruption) error
+	resolveInterruption func(ctx context.Context, interruptionID string, messageID string, status InterruptionStatus) error
+	saveObservation     func(ctx context.Context, record ObservationRecord) error
+	createChatSession   func(ctx context.Context, record CreateChatSessionRecord) (ChatSession, error)
+	getChatSession      func(ctx context.Context, sessionID string) (ChatSession, error)
+	listChatMessages    func(ctx context.Context, sessionID string) ([]ChatMessage, error)
+	createChatMessage   func(ctx context.Context, record CreateChatMessageRecord) (ChatMessage, error)
+	activeInterruption  func(ctx context.Context, sessionID string) (*Interruption, error)
 }
 
 func NewRunStore(repository Repository) RunStore {
 	return RunStore{
-		startRun:                 repository.StartRun,
-		getRun:                   repository.GetRun,
-		getRunState:              repository.GetRunState,
-		finishRun:                repository.FinishRun,
-		saveStep:                 repository.SaveStep,
-		createInteraction:        repository.CreateInteraction,
-		markRunWaiting:           repository.MarkRunWaiting,
-		createRunTurn:            repository.CreateRunTurn,
-		markInteractionResponded: repository.MarkInteractionResponded,
-		saveObservation:          repository.SaveObservation,
+		startRun:            repository.StartRun,
+		getRunState:         repository.GetRunState,
+		finishRun:           repository.FinishRun,
+		saveStep:            repository.SaveStep,
+		createInterruption:  repository.CreateInterruption,
+		markRunInterrupted:  repository.MarkRunInterrupted,
+		resolveInterruption: repository.ResolveInterruption,
+		saveObservation:     repository.SaveObservation,
+		createChatSession:   repository.CreateChatSession,
+		getChatSession:      repository.GetChatSession,
+		listChatMessages:    repository.ListChatMessages,
+		createChatMessage:   repository.CreateChatMessage,
+		activeInterruption:  repository.ActiveInterruption,
 	}
 }
 
@@ -74,7 +82,7 @@ type runState struct {
 	run                 Run
 	message             string
 	attachments         []Attachment
-	interaction         *Interaction
+	interruption        *Interruption
 	instructions        toolcatalog.Instructions
 	tools               []toolcatalog.Tool
 	toolsByName         map[string]toolcatalog.Tool
@@ -96,94 +104,160 @@ func NewService(config ServiceConfig) Service {
 	}
 }
 
-func (service Service) Run(parent context.Context, request CreateRunRequest) (RunResponse, error) {
+func (service Service) CreateChat(ctx context.Context, request CreateChatRequest) (ChatSession, error) {
+	session, err := service.runStore.createChatSession(ctx, CreateChatSessionRecord(request))
+	if err != nil {
+		return ChatSession{}, fmt.Errorf("create chat session: %w", err)
+	}
+	return session, nil
+}
+
+func (service Service) GetChat(ctx context.Context, sessionID string) (ChatSession, error) {
+	session, err := service.runStore.getChatSession(ctx, sessionID)
+	if err != nil {
+		return ChatSession{}, fmt.Errorf("get chat session: %w", err)
+	}
+	return session, nil
+}
+
+func (service Service) ListChatMessages(ctx context.Context, sessionID string) ([]ChatMessage, error) {
+	messages, err := service.runStore.listChatMessages(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list chat messages: %w", err)
+	}
+	return messages, nil
+}
+
+func (service Service) CreateChatMessage(parent context.Context, sessionID string, request CreateChatMessageRequest) (ChatMessageResponse, error) {
 	ctx, cancel := context.WithTimeout(parent, service.totalTimeout)
 	defer cancel()
 
-	run, err := service.runStore.startRun(ctx, CreateRunRecord(request))
-	if err != nil {
-		return RunResponse{}, fmt.Errorf("start run: %w", err)
+	if _, err := service.runStore.getChatSession(ctx, sessionID); err != nil {
+		return ChatMessageResponse{}, fmt.Errorf("get chat session: %w", err)
 	}
-
-	response, runErr := service.run(ctx, run, request)
-	if runErr != nil {
-		return service.failRun(run, response, runErr)
-	}
-
-	if err := service.completeRun(ctx, run, response); err != nil {
-		return RunResponse{}, err
-	}
-
-	return response, nil
-}
-
-func (service Service) GetRun(ctx context.Context, runID string) (RunResponse, error) {
-	response, err := service.runStore.getRun(ctx, runID)
-	if err != nil {
-		return RunResponse{}, fmt.Errorf("get run: %w", err)
-	}
-	return response, nil
-}
-
-func (service Service) CreateRunTurn(parent context.Context, runID string, request CreateRunTurnRequest) (RunResponse, error) {
-	ctx, cancel := context.WithTimeout(parent, service.totalTimeout)
-	defer cancel()
-
-	stateRecord, err := service.runStore.getRunState(ctx, runID)
-	if err != nil {
-		return RunResponse{}, fmt.Errorf("get run state: %w", err)
-	}
-	if stateRecord.Run.Status != RunStatusWaitingForUser {
-		return RunResponse{RunID: runID, Status: stateRecord.Run.Status}, ErrRunNotWaiting
-	}
-	if stateRecord.Pending == nil {
-		return RunResponse{RunID: runID, Status: stateRecord.Run.Status}, ErrRunNotWaiting
-	}
-
-	turn, err := service.runStore.createRunTurn(ctx, CreateRunTurnRecord{
-		RunID:       runID,
-		Message:     request.Message,
+	userMessage, err := service.runStore.createChatMessage(ctx, CreateChatMessageRecord{
+		SessionID:   sessionID,
+		Role:        ChatMessageRoleUser,
+		Content:     request.Message,
 		Attachments: request.Attachments,
 	})
 	if err != nil {
-		return RunResponse{}, fmt.Errorf("create run turn: %w", err)
-	}
-	if err := service.runStore.markInteractionResponded(ctx, stateRecord.Pending.ID, turn.ID); err != nil {
-		return RunResponse{}, fmt.Errorf("mark interaction responded: %w", err)
+		return ChatMessageResponse{}, fmt.Errorf("create user message: %w", err)
 	}
 
-	run := stateRecord.Run
-	run.Status = RunStatusRunning
-	response, runErr := service.resumeRun(ctx, run, CreateRunRequest(request), stateRecord.Pending, stateRecord.Observations)
-	if runErr != nil {
-		return service.failRun(run, response, runErr)
+	active, err := service.runStore.activeInterruption(ctx, sessionID)
+	if errors.Is(err, ErrNoActiveInterruption) {
+		active = nil
+	} else if err != nil {
+		return ChatMessageResponse{}, fmt.Errorf("active interruption: %w", err)
 	}
-	if err := service.completeRun(ctx, run, response); err != nil {
-		return RunResponse{}, err
+	if active != nil {
+		return service.resumeChatRun(ctx, userMessage, *active, request)
 	}
-
-	return response, nil
+	return service.startChatRun(ctx, userMessage, request)
 }
 
-func (service Service) run(ctx context.Context, run Run, request CreateRunRequest) (RunResponse, error) {
+func (service Service) startChatRun(ctx context.Context, userMessage ChatMessage, request CreateChatMessageRequest) (ChatMessageResponse, error) {
+	run, err := service.runStore.startRun(ctx, CreateRunRecord{
+		SessionID:        userMessage.SessionID,
+		TriggerMessageID: userMessage.ID,
+	})
+	if err != nil {
+		return ChatMessageResponse{}, fmt.Errorf("start run: %w", err)
+	}
+
+	response, runErr := service.run(ctx, run, runRequest(request))
+	if runErr != nil {
+		failed, err := service.failRun(run, response, runErr)
+		return chatMessageResponse(userMessage, nil, failed), err
+	}
+	if err := service.completeRun(ctx, run, response); err != nil {
+		return ChatMessageResponse{}, err
+	}
+	assistantMessage, err := service.createAssistantMessage(ctx, userMessage.SessionID, response)
+	if err != nil {
+		return ChatMessageResponse{}, err
+	}
+	return chatMessageResponse(userMessage, assistantMessage, response), nil
+}
+
+func (service Service) resumeChatRun(ctx context.Context, userMessage ChatMessage, interruption Interruption, request CreateChatMessageRequest) (ChatMessageResponse, error) {
+	if err := service.runStore.resolveInterruption(ctx, interruption.ID, userMessage.ID, InterruptionStatusResolved); err != nil {
+		return ChatMessageResponse{}, fmt.Errorf("resolve interruption: %w", err)
+	}
+	stateRecord, err := service.runStore.getRunState(ctx, interruption.RunID)
+	if err != nil {
+		return ChatMessageResponse{}, fmt.Errorf("get run state: %w", err)
+	}
+	run := stateRecord.Run
+	run.Status = RunStatusRunning
+	resolved := interruption
+	resolved.Status = InterruptionStatusResolved
+	resolved.RespondedAt = time.Now().UTC()
+	response, runErr := service.resumeRun(ctx, run, runRequest(request), &resolved, stateRecord.Observations)
+	if runErr != nil {
+		failed, err := service.failRun(run, response, runErr)
+		return chatMessageResponse(userMessage, nil, failed), err
+	}
+	if err := service.completeRun(ctx, run, response); err != nil {
+		return ChatMessageResponse{}, err
+	}
+	assistantMessage, err := service.createAssistantMessage(ctx, userMessage.SessionID, response)
+	if err != nil {
+		return ChatMessageResponse{}, err
+	}
+	return chatMessageResponse(userMessage, assistantMessage, response), nil
+}
+
+func (service Service) createAssistantMessage(ctx context.Context, sessionID string, response RunResponse) (*ChatMessage, error) {
+	content := response.Answer
+	if response.Interruption != nil {
+		content = response.Interruption.Message
+	}
+	if content == "" {
+		return nil, errAssistantMessageEmpty
+	}
+	message, err := service.runStore.createChatMessage(ctx, CreateChatMessageRecord{
+		SessionID: sessionID,
+		RunID:     response.RunID,
+		Role:      ChatMessageRoleAssistant,
+		Content:   content,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create assistant message: %w", err)
+	}
+	return &message, nil
+}
+
+func chatMessageResponse(userMessage ChatMessage, assistantMessage *ChatMessage, run RunResponse) ChatMessageResponse {
+	return ChatMessageResponse{
+		ChatID:           userMessage.SessionID,
+		UserMessage:      userMessage,
+		AssistantMessage: assistantMessage,
+		Run:              run,
+		Interruption:     run.Interruption,
+	}
+}
+
+func (service Service) run(ctx context.Context, run Run, request runRequest) (RunResponse, error) {
 	return service.runFromStep(ctx, run, request, nil, nil, 1)
 }
 
 func (service Service) resumeRun(
 	ctx context.Context,
 	run Run,
-	request CreateRunRequest,
-	interaction *Interaction,
+	request runRequest,
+	interruption *Interruption,
 	observations []Observation,
 ) (RunResponse, error) {
-	return service.runFromStep(ctx, run, request, interaction, observations, nextStepOrder(observations))
+	return service.runFromStep(ctx, run, request, interruption, observations, nextStepOrder(observations))
 }
 
 func (service Service) runFromStep(
 	ctx context.Context,
 	run Run,
-	request CreateRunRequest,
-	interaction *Interaction,
+	request runRequest,
+	interruption *Interruption,
 	observations []Observation,
 	startStepOrder int,
 ) (RunResponse, error) {
@@ -191,7 +265,7 @@ func (service Service) runFromStep(
 	if err != nil {
 		return RunResponse{}, err
 	}
-	state.interaction = interaction
+	state.interruption = interruption
 	state.observations = append(state.observations, observations...)
 
 	for stepOrder := startStepOrder; stepOrder < startStepOrder+service.maxSteps; stepOrder++ {
@@ -214,7 +288,7 @@ func nextStepOrder(observations []Observation) int {
 	return maxStepOrder + 1
 }
 
-func (service Service) newRunState(ctx context.Context, run Run, request CreateRunRequest) (*runState, error) {
+func (service Service) newRunState(ctx context.Context, run Run, request runRequest) (*runState, error) {
 	instructions, err := service.catalog.GetInstructions(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get instructions: %w", err)
@@ -241,7 +315,7 @@ func (service Service) runStep(ctx context.Context, state *runState, stepOrder i
 		Instructions: state.instructions.Content,
 		Message:      state.message,
 		Attachments:  state.attachments,
-		Interaction:  state.interaction,
+		Interruption: state.interruption,
 		Tools:        state.tools,
 		Observations: state.observations,
 	})
@@ -263,26 +337,27 @@ func (service Service) runStep(ctx context.Context, state *runState, stepOrder i
 }
 
 func (service Service) askUser(ctx context.Context, state *runState, action PlannerAction) (RunResponse, error) {
-	interaction, err := service.runStore.createInteraction(ctx, Interaction{
-		RunID:   state.run.ID,
-		Type:    InteractionTypeUserInput,
-		Status:  InteractionStatusPending,
-		Message: action.Message,
-		Payload: action.Payload,
+	interruption, err := service.runStore.createInterruption(ctx, Interruption{
+		SessionID: state.run.SessionID,
+		RunID:     state.run.ID,
+		Type:      InterruptionTypeInputRequest,
+		Status:    InterruptionStatusAwaitingReview,
+		Message:   action.Message,
+		Payload:   action.Payload,
 	})
 	if err != nil {
-		return RunResponse{}, fmt.Errorf("create interaction: %w", err)
+		return RunResponse{}, fmt.Errorf("create interruption: %w", err)
 	}
 
-	state.run.Status = RunStatusWaitingForUser
-	if err := service.runStore.markRunWaiting(ctx, state.run, interaction); err != nil {
-		return RunResponse{}, fmt.Errorf("mark run waiting: %w", err)
+	state.run.Status = RunStatusInterrupted
+	if err := service.runStore.markRunInterrupted(ctx, state.run, interruption); err != nil {
+		return RunResponse{}, fmt.Errorf("mark run interrupted: %w", err)
 	}
 
 	return RunResponse{
-		RunID:       state.run.ID,
-		Status:      RunStatusWaitingForUser,
-		Interaction: &interaction,
+		RunID:        state.run.ID,
+		Status:       RunStatusInterrupted,
+		Interruption: &interruption,
 	}, nil
 }
 
@@ -385,13 +460,11 @@ func (service Service) saveStep(ctx context.Context, step StepRecord) error {
 }
 
 func (service Service) completeRun(ctx context.Context, run Run, response RunResponse) error {
-	if response.Status == RunStatusWaitingForUser {
+	if response.Status == RunStatusInterrupted {
 		return nil
 	}
 
 	run.Status = response.Status
-	run.Answer = response.Answer
-	run.Outputs = response.Outputs
 	run.ErrorSummary = response.Error
 	if err := service.runStore.finishRun(ctx, run); err != nil {
 		return fmt.Errorf("finish run: %w", err)

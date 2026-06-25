@@ -74,9 +74,10 @@ func newRouterConfig(cfg config.Config, database *gorm.DB) (httpapi.RouterConfig
 	statusHandler := status.NewHandler(statusService, cfg.AppEnv)
 
 	return httpapi.RouterConfig{
-		StatusHandler: statusHandler,
-		ToolHandler:   toolHandler,
-		AgentHandler:  agentHandler,
+		StatusHandler:      statusHandler,
+		ToolHandler:        toolHandler,
+		ChatSessionHandler: agentHandler,
+		ChatMessageHandler: agentHandler,
 	}, nil
 }
 
@@ -91,7 +92,7 @@ func newAgentHandler(cfg config.Config, repository agent.Repository, catalog age
 		MaxSteps:     cfg.AgentMaxSteps,
 		TotalTimeout: time.Duration(cfg.AgentTotalTimeoutMS) * time.Millisecond,
 	})
-	return agent.NewHandler(service, agent.UploadConfig{
+	return agent.NewHandler(service, service, agent.UploadConfig{
 		MaxFiles:      cfg.AgentMaxFilesPerRun,
 		MaxFileBytes:  cfg.AgentMaxFileBytes,
 		MaxTotalBytes: cfg.AgentMaxTotalFileBytes,

@@ -60,61 +60,64 @@ type AgentInstruction struct {
 }
 
 type AgentRun struct {
-	ID            string    `gorm:"primaryKey;type:text"`
-	Message       string    `gorm:"not null"`
-	Status        string    `gorm:"not null"`
-	AnswerSummary string    `gorm:"not null;default:''"`
-	OutputSummary JSON      `gorm:"type:json;not null;default:'{}'"`
-	ErrorSummary  string    `gorm:"not null;default:''"`
-	StartedAt     time.Time `gorm:"not null"`
-	FinishedAt    sql.NullTime
+	ID               string    `gorm:"primaryKey;type:text"`
+	SessionID        string    `gorm:"not null;default:'';index"`
+	TriggerMessageID string    `gorm:"not null;default:'';index"`
+	Status           string    `gorm:"not null"`
+	ErrorSummary     string    `gorm:"not null;default:''"`
+	StartedAt        time.Time `gorm:"not null"`
+	FinishedAt       sql.NullTime
 }
 
-type AgentRunAttachment struct {
-	ID             string    `gorm:"primaryKey;type:text"`
-	RunID          string    `gorm:"not null;index"`
-	Filename       string    `gorm:"not null"`
-	MIMEType       string    `gorm:"not null"`
-	Kind           string    `gorm:"not null;index"`
-	SizeBytes      int64     `gorm:"not null"`
-	ProviderFileID string    `gorm:"not null;default:''"`
-	CreatedAt      time.Time `gorm:"not null"`
-	Run            AgentRun  `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
-}
-
-type AgentRunInteraction struct {
-	ID             string    `gorm:"primaryKey;type:text"`
-	RunID          string    `gorm:"not null;index"`
-	Type           string    `gorm:"not null;index"`
-	Status         string    `gorm:"not null;index"`
-	Message        string    `gorm:"not null"`
-	Payload        JSON      `gorm:"type:json;not null;default:'{}'"`
-	ResponseTurnID string    `gorm:"not null;default:''"`
-	CreatedAt      time.Time `gorm:"not null"`
-	RespondedAt    sql.NullTime
-	Run            AgentRun `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
-}
-
-type AgentRunTurn struct {
+type ChatSession struct {
 	ID        string    `gorm:"primaryKey;type:text"`
-	RunID     string    `gorm:"not null;index"`
-	Message   string    `gorm:"not null"`
+	Title     string    `gorm:"not null;default:''"`
+	Status    string    `gorm:"not null;index"`
 	CreatedAt time.Time `gorm:"not null"`
-	Run       AgentRun  `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+	UpdatedAt time.Time `gorm:"not null"`
 }
 
-type AgentRunTurnAttachment struct {
-	ID             string       `gorm:"primaryKey;type:text"`
-	TurnID         string       `gorm:"not null;index"`
-	RunID          string       `gorm:"not null;index"`
-	Filename       string       `gorm:"not null"`
-	MIMEType       string       `gorm:"not null"`
-	Kind           string       `gorm:"not null;index"`
-	SizeBytes      int64        `gorm:"not null"`
-	ProviderFileID string       `gorm:"not null;default:''"`
-	CreatedAt      time.Time    `gorm:"not null"`
-	Turn           AgentRunTurn `gorm:"foreignKey:TurnID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
-	Run            AgentRun     `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+type ChatMessage struct {
+	ID           string    `gorm:"primaryKey;type:text"`
+	SessionID    string    `gorm:"not null;index"`
+	RunID        string    `gorm:"not null;default:'';index"`
+	Role         string    `gorm:"not null;index"`
+	Content      string    `gorm:"not null"`
+	Status       string    `gorm:"not null;index"`
+	Sequence     int       `gorm:"not null;index"`
+	CreatedAt    time.Time `gorm:"not null"`
+	CompletedAt  sql.NullTime
+	ErrorSummary string      `gorm:"not null;default:''"`
+	Session      ChatSession `gorm:"foreignKey:SessionID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+}
+
+type ChatAttachment struct {
+	ID             string      `gorm:"primaryKey;type:text"`
+	SessionID      string      `gorm:"not null;index"`
+	MessageID      string      `gorm:"not null;index"`
+	Filename       string      `gorm:"not null"`
+	MIMEType       string      `gorm:"not null"`
+	Kind           string      `gorm:"not null;index"`
+	SizeBytes      int64       `gorm:"not null"`
+	ProviderFileID string      `gorm:"not null;default:''"`
+	CreatedAt      time.Time   `gorm:"not null"`
+	Session        ChatSession `gorm:"foreignKey:SessionID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+	Message        ChatMessage `gorm:"foreignKey:MessageID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+}
+
+type AgentInterruption struct {
+	ID                string    `gorm:"primaryKey;type:text"`
+	SessionID         string    `gorm:"not null;index"`
+	RunID             string    `gorm:"not null;index"`
+	Type              string    `gorm:"not null;index"`
+	Status            string    `gorm:"not null;index"`
+	Message           string    `gorm:"not null"`
+	Payload           JSON      `gorm:"type:json;not null;default:'{}'"`
+	ResponseMessageID string    `gorm:"not null;default:'';index"`
+	CreatedAt         time.Time `gorm:"not null"`
+	ResolvedAt        sql.NullTime
+	Session           ChatSession `gorm:"foreignKey:SessionID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
+	Run               AgentRun    `gorm:"foreignKey:RunID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
 }
 
 type AgentRunObservation struct {
@@ -144,11 +147,11 @@ func Models() []any {
 	return []any{
 		&Tool{},
 		&AgentInstruction{},
+		&ChatSession{},
+		&ChatMessage{},
+		&ChatAttachment{},
 		&AgentRun{},
-		&AgentRunAttachment{},
-		&AgentRunInteraction{},
-		&AgentRunTurn{},
-		&AgentRunTurnAttachment{},
+		&AgentInterruption{},
 		&AgentRunObservation{},
 		&AgentRunStep{},
 	}

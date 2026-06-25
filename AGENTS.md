@@ -44,6 +44,8 @@ go run gorm.io/cli/gorm@v0.2.4 gen -i internal/database/queryinput/queries.go -o
 
 Do not hand-edit generated query code unless you are deliberately removing stale generated output and have updated the query input source in the same change. Keep custom SQL in the query input package and general create/update operations on GORM's typed API where no custom query is needed.
 
+Production code outside `internal/database/generated` must not use hand-written GORM query entry points such as `Where("...")`, `Order("...")`, `First(&...)`, `Find(&...)`, `Scan(&...)`, `Save(&...)`, or raw `Exec(ctx, ...)` SQL. Add or change SQL in `internal/database/queryinput/queries.go`, regenerate `internal/database/generated`, and call the generated query methods from owning packages. Because GORM CLI raw SQL methods scan into zero values when no rows match, repository code must preserve domain not-found behavior explicitly after generated lookups.
+
 ## AI Change Discipline
 
 This repository uses strict local guardrails for AI-assisted coding. Treat these as default-deny rules.

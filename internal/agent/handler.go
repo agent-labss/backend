@@ -15,6 +15,14 @@ import (
 )
 
 const (
+	ChatSessionsPath = "/api/chats"
+	ChatSessionPath  = ChatSessionsPath + "/:chat_id"
+	ChatMessagesPath = ChatSessionPath + "/messages"
+	ChatMessagePath  = ChatMessagesPath + "/:message_id"
+	ChatEventsPath   = ChatSessionPath + "/events"
+)
+
+const (
 	errorField                  = "error"
 	messageOrAttachmentRequired = "message or attachment is required"
 )

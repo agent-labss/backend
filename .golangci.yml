@@ -160,6 +160,12 @@ linters:
         - .SendStatus(
         - .Next(
 
+  exclusions:
+    rules:
+      - path: ^internal/database/queryinput/queries\.go$
+        linters:
+          - interfacebloat
+
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0

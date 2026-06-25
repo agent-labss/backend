@@ -16,6 +16,12 @@ var errAssistantMessageEmpty = errors.New("assistant message is empty")
 
 const defaultFailedExecutionFinishTimeout = 5 * time.Second
 
+const (
+	resumePayloadResponseMessageID   = "response_message_id"
+	resumePayloadResponseMessage     = "response_message"
+	resumePayloadResponseAttachments = "response_attachments"
+)
+
 type Catalog interface {
 	ListEnabledTools(ctx context.Context) ([]toolcatalog.Tool, error)
 	GetInstructions(ctx context.Context) (toolcatalog.Instructions, error)
@@ -40,6 +46,7 @@ type AgentExecutionScheduler func(task func(context.Context))
 
 type AgentExecutionStore struct {
 	startExecution           func(ctx context.Context, record CreateAgentExecutionRecord) (AgentExecution, error)
+	activeExecution          func(ctx context.Context, sessionID string) (*AgentExecution, error)
 	getExecutionState        func(ctx context.Context, executionID string) (AgentExecutionStateRecord, error)
 	finishExecution          func(ctx context.Context, execution AgentExecution) error
 	saveStep                 func(ctx context.Context, step StepRecord) error
@@ -57,6 +64,7 @@ type AgentExecutionStore struct {
 func NewAgentExecutionStore(repository Repository) AgentExecutionStore {
 	return AgentExecutionStore{
 		startExecution:           repository.StartAgentExecution,
+		activeExecution:          repository.ActiveAgentExecution,
 		getExecutionState:        repository.GetAgentExecutionState,
 		finishExecution:          repository.FinishAgentExecution,
 		saveStep:                 repository.SaveStep,
@@ -166,6 +174,18 @@ func (service Service) CreateChatMessage(ctx context.Context, sessionID string, 
 	if _, err := service.executionStore.getChatSession(ctx, sessionID); err != nil {
 		return SubmitChatMessageResponse{}, fmt.Errorf("get chat session: %w", err)
 	}
+	active, err := service.executionStore.activeInterruption(ctx, sessionID)
+	if errors.Is(err, ErrNoActiveInterruption) {
+		active = nil
+	} else if err != nil {
+		return SubmitChatMessageResponse{}, fmt.Errorf("active interruption: %w", err)
+	}
+	if active == nil {
+		if err := service.ensureNoActiveExecution(ctx, sessionID); err != nil {
+			return SubmitChatMessageResponse{}, err
+		}
+	}
+
 	userMessage, err := service.executionStore.createChatMessage(ctx, CreateChatMessageRecord{
 		SessionID:   sessionID,
 		Role:        ChatMessageRoleUser,
@@ -178,16 +198,24 @@ func (service Service) CreateChatMessage(ctx context.Context, sessionID string, 
 	userMessage = chatMessageMetadata(userMessage)
 	service.publishMessageCreated(userMessage)
 
-	active, err := service.executionStore.activeInterruption(ctx, sessionID)
-	if errors.Is(err, ErrNoActiveInterruption) {
-		active = nil
-	} else if err != nil {
-		return SubmitChatMessageResponse{}, fmt.Errorf("active interruption: %w", err)
-	}
 	if active != nil {
 		return service.submitResumeChatExecution(ctx, userMessage, *active, request)
 	}
 	return service.submitNewChatExecution(ctx, userMessage, request)
+}
+
+func (service Service) ensureNoActiveExecution(ctx context.Context, sessionID string) error {
+	execution, err := service.executionStore.activeExecution(ctx, sessionID)
+	if errors.Is(err, ErrAgentExecutionNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("active execution: %w", err)
+	}
+	if execution != nil {
+		return ErrAgentExecutionActive
+	}
+	return nil
 }
 
 func (service Service) submitNewChatExecution(ctx context.Context, userMessage ChatMessage, request CreateChatMessageRequest) (SubmitChatMessageResponse, error) {
@@ -211,18 +239,20 @@ func (service Service) submitNewChatExecution(ctx context.Context, userMessage C
 }
 
 func (service Service) submitResumeChatExecution(ctx context.Context, userMessage ChatMessage, interruption Interruption, request CreateChatMessageRequest) (SubmitChatMessageResponse, error) {
-	if err := service.executionStore.resolveInterruption(ctx, interruption.ID, userMessage.ID, InterruptionStatusResolved); err != nil {
-		return SubmitChatMessageResponse{}, fmt.Errorf("resolve interruption: %w", err)
-	}
 	stateRecord, err := service.executionStore.getExecutionState(ctx, interruption.ExecutionID)
 	if err != nil {
 		return SubmitChatMessageResponse{}, fmt.Errorf("get execution state: %w", err)
 	}
 	execution := stateRecord.AgentExecution
 	execution.Status = AgentExecutionStatusRunning
-	resolved := interruption
-	resolved.Status = InterruptionStatusResolved
-	resolved.RespondedAt = time.Now().UTC()
+	resumeRequest, err := service.resumedExecutionRequest(ctx, execution, userMessage, request)
+	if err != nil {
+		return SubmitChatMessageResponse{}, err
+	}
+	if err := service.executionStore.resolveInterruption(ctx, interruption.ID, userMessage.ID, InterruptionStatusResolved); err != nil {
+		return SubmitChatMessageResponse{}, fmt.Errorf("resolve interruption: %w", err)
+	}
+	resolved := resolvedInterruption(interruption, userMessage)
 
 	service.eventBus.Publish(userMessage.SessionID, ChatEvent{
 		Type:           EventTypeInterruptionResolved,
@@ -233,7 +263,7 @@ func (service Service) submitResumeChatExecution(ctx context.Context, userMessag
 	})
 	service.eventBus.Publish(userMessage.SessionID, ChatEvent{Type: EventTypeExecutionResumed, ChatID: userMessage.SessionID, ExecutionID: execution.ID})
 	service.schedule(func(ctx context.Context) {
-		service.executeResumedChatExecution(ctx, execution, userMessage.SessionID, executionRequest(request), &resolved, stateRecord.Observations)
+		service.executeResumedChatExecution(ctx, execution, userMessage.SessionID, resumeRequest, &resolved, stateRecord.Observations)
 	})
 	return SubmitChatMessageResponse{
 		ChatID:      userMessage.SessionID,
@@ -241,6 +271,50 @@ func (service Service) submitResumeChatExecution(ctx context.Context, userMessag
 		ExecutionID: execution.ID,
 		Status:      AgentExecutionStatusRunning,
 	}, nil
+}
+
+func (service Service) resumedExecutionRequest(ctx context.Context, execution AgentExecution, userMessage ChatMessage, request CreateChatMessageRequest) (executionRequest, error) {
+	resumeRequest := executionRequest{Message: userMessage.Content, Attachments: request.Attachments}
+	if execution.TriggerMessageID == "" {
+		return resumeRequest, nil
+	}
+
+	messages, err := service.executionStore.listChatMessages(ctx, execution.SessionID)
+	if err != nil {
+		return executionRequest{}, fmt.Errorf("list chat messages: %w", err)
+	}
+	for _, message := range messages {
+		if message.ID == execution.TriggerMessageID {
+			resumeRequest.Message = message.Content
+			return resumeRequest, nil
+		}
+	}
+
+	return resumeRequest, nil
+}
+
+func resolvedInterruption(interruption Interruption, userMessage ChatMessage) Interruption {
+	resolved := interruption
+	resolved.Status = InterruptionStatusResolved
+	resolved.RespondedAt = time.Now().UTC()
+	resolved.Payload = resolvedInterruptionPayload(interruption.Payload, userMessage)
+	return resolved
+}
+
+func resolvedInterruptionPayload(raw json.RawMessage, userMessage ChatMessage) json.RawMessage {
+	payload := map[string]any{}
+	if len(raw) > 0 {
+		var existing map[string]any
+		if err := json.Unmarshal(raw, &existing); err == nil && existing != nil {
+			payload = existing
+		}
+	}
+	payload[resumePayloadResponseMessageID] = userMessage.ID
+	payload[resumePayloadResponseMessage] = userMessage.Content
+	if len(userMessage.Attachments) > 0 {
+		payload[resumePayloadResponseAttachments] = attachmentMetadataList(userMessage.Attachments)
+	}
+	return mustMarshalJSON(payload)
 }
 
 func (service Service) executeNewChatExecution(parent context.Context, execution AgentExecution, sessionID string, request executionRequest) {

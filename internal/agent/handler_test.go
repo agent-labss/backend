@@ -112,6 +112,16 @@ func TestHandlerCreateChatMessageAcceptsJSON(t *testing.T) {
 	requireJSONExecutionID(t, body)
 }
 
+func TestHandlerCreateChatMessageReturnsConflictForActiveExecution(t *testing.T) {
+	service := &fakeChatService{err: ErrAgentExecutionActive}
+	resp := testCreateChatMessageRequest(t, service, []byte(`{"message":"second request"}`))
+	defer closeAgentResponseBody(t, resp)
+
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusConflict)
+	}
+}
+
 func TestHandlerGetChatReturnsSession(t *testing.T) {
 	service := &fakeChatService{chat: ChatSession{ID: "chat_test", Title: "Reports", Status: ChatSessionStatusOpen}}
 	handler := NewHandler(service, service, nil)

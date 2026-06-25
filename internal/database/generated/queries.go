@@ -101,6 +101,7 @@ func AgentExecutionQueries[T any](db *gorm.DB, opts ...clause.Expression) _Agent
 type _AgentExecutionQueriesInterface[T any] interface {
 	typed.Interface[T]
 	GetByID(ctx context.Context, id string) (database.AgentExecution, error)
+	ActiveBySessionID(ctx context.Context, sessionID string, runningStatus string, interruptedStatus string) (database.AgentExecution, error)
 	FinishByID(ctx context.Context, status string, errorSummary string, finishedAt sql.NullTime, id string) error
 	MarkInterruptedByID(ctx context.Context, status string, id string) error
 }
@@ -115,6 +116,18 @@ func (e _AgentExecutionQueriesImpl[T]) GetByID(ctx context.Context, id string) (
 
 	sb.WriteString("SELECT * FROM ? WHERE id = ? LIMIT 1")
 	_params = append(_params, clause.Table{Name: clause.CurrentTable}, id)
+
+	var result database.AgentExecution
+	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)
+	return result, err
+}
+
+func (e _AgentExecutionQueriesImpl[T]) ActiveBySessionID(ctx context.Context, sessionID string, runningStatus string, interruptedStatus string) (database.AgentExecution, error) {
+	var sb strings.Builder
+	_params := make([]any, 0, 4)
+
+	sb.WriteString("SELECT * FROM ? WHERE session_id = ? AND status IN (?, ?) ORDER BY started_at DESC LIMIT 1")
+	_params = append(_params, clause.Table{Name: clause.CurrentTable}, sessionID, runningStatus, interruptedStatus)
 
 	var result database.AgentExecution
 	err := e.Raw(sb.String(), _params...).Scan(ctx, &result)

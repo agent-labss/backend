@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -18,6 +19,7 @@ var (
 	ErrDatabaseMissing          = errors.New("agent database is missing")
 	ErrAgentExecutionNotFound   = errors.New("agent execution not found")
 	ErrAgentExecutionNotWaiting = errors.New("agent execution is not waiting for user")
+	ErrAgentExecutionActive     = errors.New("agent execution is already active")
 	ErrChatSessionNotFound      = errors.New("chat session not found")
 	ErrNoActiveInterruption     = errors.New("active interruption not found")
 )
@@ -55,6 +57,9 @@ func (repository Repository) StartAgentExecution(ctx context.Context, record Cre
 		StartedAt:        execution.StartedAt,
 	}
 	if err := generated.AgentExecutionQueries[database.AgentExecution](repository.database).Create(ctx, &executionRecord); err != nil {
+		if isUniqueConstraintError(err) {
+			return AgentExecution{}, ErrAgentExecutionActive
+		}
 		return AgentExecution{}, fmt.Errorf("start execution: %w", err)
 	}
 
@@ -227,6 +232,25 @@ func (repository Repository) GetAgentExecutionState(ctx context.Context, executi
 	}
 
 	return state, nil
+}
+
+func (repository Repository) ActiveAgentExecution(ctx context.Context, sessionID string) (*AgentExecution, error) {
+	if repository.database == nil {
+		return nil, ErrDatabaseMissing
+	}
+
+	record, err := generated.AgentExecutionQueries[database.AgentExecution](repository.database).ActiveBySessionID(ctx, sessionID, string(AgentExecutionStatusRunning), string(AgentExecutionStatusInterrupted))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrAgentExecutionNotFound
+		}
+		return nil, fmt.Errorf("active execution: %w", err)
+	}
+	if record.ID == "" {
+		return nil, ErrAgentExecutionNotFound
+	}
+	execution := agentExecutionFromRecord(record)
+	return &execution, nil
 }
 
 func (repository Repository) executionRecord(ctx context.Context, executionID string) (database.AgentExecution, error) {
@@ -511,4 +535,8 @@ func interruptionFromRecord(record database.AgentInterruption) Interruption {
 
 func newRuntimeID(prefix string) string {
 	return fmt.Sprintf("%s_%d", prefix, time.Now().UTC().UnixNano())
+}
+
+func isUniqueConstraintError(err error) bool {
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }

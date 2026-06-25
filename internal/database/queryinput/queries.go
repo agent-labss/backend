@@ -27,6 +27,9 @@ type AgentExecutionQueries interface {
 	// SELECT * FROM @@table WHERE id = @id LIMIT 1
 	GetByID(id string) (database.AgentExecution, error)
 
+	// SELECT * FROM @@table WHERE session_id = @sessionID AND status IN (@runningStatus, @interruptedStatus) ORDER BY started_at DESC LIMIT 1
+	ActiveBySessionID(sessionID string, runningStatus string, interruptedStatus string) (database.AgentExecution, error)
+
 	// UPDATE @@table SET status = @status, error_summary = @errorSummary, finished_at = @finishedAt WHERE id = @id
 	FinishByID(status string, errorSummary string, finishedAt sql.NullTime, id string) error
 

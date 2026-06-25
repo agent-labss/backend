@@ -61,7 +61,7 @@ type AgentInstruction struct {
 
 type AgentExecution struct {
 	ID               string    `gorm:"primaryKey;type:text"`
-	SessionID        string    `gorm:"not null;default:'';index"`
+	SessionID        string    `gorm:"not null;default:'';index;index:idx_active_agent_execution_session,unique,where:status = 'running' OR status = 'interrupted'"`
 	TriggerMessageID string    `gorm:"not null;default:'';index"`
 	Status           string    `gorm:"not null"`
 	ErrorSummary     string    `gorm:"not null;default:''"`

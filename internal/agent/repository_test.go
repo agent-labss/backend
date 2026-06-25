@@ -145,6 +145,54 @@ func TestRepositoryReturnsNotFoundForMissingChatSessionAndRun(t *testing.T) {
 	if _, err := repository.GetAgentExecutionState(context.Background(), "exec_missing"); !errors.Is(err, ErrAgentExecutionNotFound) {
 		t.Fatalf("GetAgentExecutionState() error = %v, want ErrAgentExecutionNotFound", err)
 	}
+	if _, err := repository.ActiveAgentExecution(context.Background(), "chat_missing"); !errors.Is(err, ErrAgentExecutionNotFound) {
+		t.Fatalf("ActiveAgentExecution() error = %v, want ErrAgentExecutionNotFound", err)
+	}
+}
+
+func TestRepositoryFindsOnlyActiveAgentExecution(t *testing.T) {
+	repository := NewRepository(newTestDatabase(t))
+	session, err := repository.CreateChatSession(context.Background(), CreateChatSessionRecord{})
+	if err != nil {
+		t.Fatalf("CreateChatSession() error = %v", err)
+	}
+	execution, err := repository.StartAgentExecution(context.Background(), CreateAgentExecutionRecord{SessionID: session.ID})
+	if err != nil {
+		t.Fatalf("StartAgentExecution() error = %v", err)
+	}
+
+	active, err := repository.ActiveAgentExecution(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("ActiveAgentExecution() error = %v", err)
+	}
+	if active.ID != execution.ID {
+		t.Fatalf("active.ID = %q, want %q", active.ID, execution.ID)
+	}
+
+	execution.Status = AgentExecutionStatusSucceeded
+	if err := repository.FinishAgentExecution(context.Background(), execution); err != nil {
+		t.Fatalf("FinishAgentExecution() error = %v", err)
+	}
+	if _, err := repository.ActiveAgentExecution(context.Background(), session.ID); !errors.Is(err, ErrAgentExecutionNotFound) {
+		t.Fatalf("ActiveAgentExecution() after finish error = %v, want ErrAgentExecutionNotFound", err)
+	}
+}
+
+func TestRepositoryStartAgentExecutionRejectsActiveExecution(t *testing.T) {
+	repository := NewRepository(newTestDatabase(t))
+	session, err := repository.CreateChatSession(context.Background(), CreateChatSessionRecord{})
+	if err != nil {
+		t.Fatalf("CreateChatSession() error = %v", err)
+	}
+	if _, err := repository.StartAgentExecution(context.Background(), CreateAgentExecutionRecord{SessionID: session.ID}); err != nil {
+		t.Fatalf("StartAgentExecution(first) error = %v", err)
+	}
+
+	_, err = repository.StartAgentExecution(context.Background(), CreateAgentExecutionRecord{SessionID: session.ID})
+
+	if !errors.Is(err, ErrAgentExecutionActive) {
+		t.Fatalf("StartAgentExecution(second) error = %v, want ErrAgentExecutionActive", err)
+	}
 }
 
 //nolint:cyclop,funlen,gocognit // This integration test verifies interruption persistence, lookup, resolution, and run state together.

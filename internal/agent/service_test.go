@@ -97,6 +97,14 @@ func (store *memoryExecutionStore) StartAgentExecution(_ context.Context, record
 	return store.run, nil
 }
 
+func (store *memoryExecutionStore) ActiveAgentExecution(_ context.Context, sessionID string) (*AgentExecution, error) {
+	if store.run.SessionID == sessionID && (store.run.Status == AgentExecutionStatusRunning || store.run.Status == AgentExecutionStatusInterrupted) {
+		execution := store.run
+		return &execution, nil
+	}
+	return nil, ErrAgentExecutionNotFound
+}
+
 func (store *memoryExecutionStore) FinishAgentExecution(_ context.Context, run AgentExecution) error {
 	store.finishedExecution = run
 	store.run = run
@@ -225,6 +233,7 @@ func (store *memoryExecutionStore) activeInterruption() *Interruption {
 func executionStores(store *memoryExecutionStore) AgentExecutionStore {
 	return AgentExecutionStore{
 		startExecution:           store.StartAgentExecution,
+		activeExecution:          store.ActiveAgentExecution,
 		getExecutionState:        store.GetAgentExecutionState,
 		finishExecution:          store.FinishAgentExecution,
 		saveStep:                 store.SaveStep,
@@ -363,6 +372,29 @@ func TestServiceCreateChatMessageResolvesInterruptionAndSchedulesExistingRun(t *
 
 	assertNextEvent(t, events, EventTypeMessageCreated)
 	assertNextEvent(t, events, EventTypeExecutionCompleted)
+}
+
+func TestServiceCreateChatMessageRejectsWhileExecutionRunning(t *testing.T) {
+	executionStore := newChatMemoryExecutionStore()
+	executionStore.run = AgentExecution{ID: "exec_running", SessionID: "chat_test", Status: AgentExecutionStatusRunning}
+	service := NewService(ServiceConfig{
+		Planner:             &fakePlanner{actions: []PlannerAction{{Type: ActionTypeFinalAnswer, Answer: "done"}}},
+		Catalog:             fakeCatalog{},
+		Executor:            &fakeExecutor{},
+		AgentExecutionStore: executionStores(executionStore),
+		MaxSteps:            3,
+		TotalTimeout:        time.Second,
+		Schedule:            immediateRunScheduler,
+	})
+
+	_, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "second request"})
+
+	if err == nil {
+		t.Fatal("CreateChatMessage() error = nil, want active execution error")
+	}
+	if len(executionStore.messages) != 0 {
+		t.Fatalf("messages = %#v, want no message persisted for rejected request", executionStore.messages)
+	}
 }
 
 func assertNextEvent(t *testing.T, events <-chan ChatEvent, eventType ChatEventType) ChatEvent {
@@ -733,17 +765,30 @@ func TestServiceCreateChatMessageResumesInterruptedRunWithAttachmentsAndObservat
 func requirePlannerSawInterruptionResume(t *testing.T, planner *fakePlanner) {
 	t.Helper()
 
-	if len(planner.requests) == 0 || planner.requests[0].Message != "ok" {
-		t.Fatalf("planner requests = %#v, want resume message", planner.requests)
+	if len(planner.requests) == 0 || planner.requests[0].Message != "delete duplicate account" {
+		t.Fatalf("planner requests = %#v, want original trigger message", planner.requests)
 	}
 	if planner.requests[0].Interruption == nil || planner.requests[0].Interruption.Message != "Which account should I use?" {
 		t.Fatalf("planner interruption = %#v, want interruption context", planner.requests[0].Interruption)
 	}
+	requirePlannerResumePayload(t, planner.requests[0].Interruption.Payload)
 	if len(planner.requests[0].Observations) != 1 {
 		t.Fatalf("planner observations = %#v, want prior observation", planner.requests[0].Observations)
 	}
 	if len(planner.requests[0].Attachments) != 1 {
 		t.Fatalf("planner attachments = %d, want 1", len(planner.requests[0].Attachments))
+	}
+}
+
+func requirePlannerResumePayload(t *testing.T, raw json.RawMessage) {
+	t.Helper()
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("planner interruption payload error = %v", err)
+	}
+	if payload[resumePayloadResponseMessage] != "ok" {
+		t.Fatalf("planner interruption payload = %#v, want response message", payload)
 	}
 }
 
@@ -901,7 +946,16 @@ func newChatMemoryExecutionStore() *memoryExecutionStore {
 
 func newInterruptedMemoryExecutionStore() *memoryExecutionStore {
 	store := newChatMemoryExecutionStore()
-	store.run = AgentExecution{ID: testExecutionID, SessionID: "chat_test", Status: AgentExecutionStatusInterrupted, StartedAt: time.Now()}
+	store.messages = append(store.messages, ChatMessage{
+		ID:        "msg_trigger",
+		SessionID: "chat_test",
+		Role:      ChatMessageRoleUser,
+		Content:   "delete duplicate account",
+		Status:    ChatMessageStatusCompleted,
+		Sequence:  1,
+		CreatedAt: time.Now(),
+	})
+	store.run = AgentExecution{ID: testExecutionID, SessionID: "chat_test", TriggerMessageID: "msg_trigger", Status: AgentExecutionStatusInterrupted, StartedAt: time.Now()}
 	store.interruptions = []Interruption{{
 		ID:          "int_test",
 		SessionID:   "chat_test",

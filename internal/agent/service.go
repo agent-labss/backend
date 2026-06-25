@@ -32,7 +32,11 @@ type ServiceConfig struct {
 	RunStore     RunStore
 	MaxSteps     int
 	TotalTimeout time.Duration
+	EventBus     *EventBus
+	Schedule     RunScheduler
 }
+
+type RunScheduler func(task func())
 
 type RunStore struct {
 	startRun            func(ctx context.Context, record CreateRunRecord) (Run, error)
@@ -76,6 +80,8 @@ type Service struct {
 	maxSteps               int
 	totalTimeout           time.Duration
 	failedRunFinishTimeout time.Duration
+	eventBus               *EventBus
+	schedule               RunScheduler
 }
 
 type runState struct {
@@ -101,7 +107,27 @@ func NewService(config ServiceConfig) Service {
 		maxSteps:               config.MaxSteps,
 		totalTimeout:           config.TotalTimeout,
 		failedRunFinishTimeout: defaultFailedRunFinishTimeout,
+		eventBus:               configuredEventBus(config.EventBus),
+		schedule:               configuredScheduler(config.Schedule),
 	}
+}
+
+func defaultRunScheduler(task func()) {
+	go task()
+}
+
+func configuredEventBus(bus *EventBus) *EventBus {
+	if bus != nil {
+		return bus
+	}
+	return NewEventBus()
+}
+
+func configuredScheduler(schedule RunScheduler) RunScheduler {
+	if schedule != nil {
+		return schedule
+	}
+	return defaultRunScheduler
 }
 
 func (service Service) CreateChat(ctx context.Context, request CreateChatRequest) (ChatSession, error) {
@@ -128,12 +154,17 @@ func (service Service) ListChatMessages(ctx context.Context, sessionID string) (
 	return messages, nil
 }
 
-func (service Service) CreateChatMessage(parent context.Context, sessionID string, request CreateChatMessageRequest) (ChatMessageResponse, error) {
-	ctx, cancel := context.WithTimeout(parent, service.totalTimeout)
-	defer cancel()
+func (service Service) SubscribeChatEvents(ctx context.Context, chatID string) (<-chan ChatEvent, func(), error) {
+	if _, err := service.runStore.getChatSession(ctx, chatID); err != nil {
+		return nil, nil, fmt.Errorf("get chat session: %w", err)
+	}
+	events, unsubscribe := service.eventBus.Subscribe(chatID)
+	return events, unsubscribe, nil
+}
 
+func (service Service) CreateChatMessage(ctx context.Context, sessionID string, request CreateChatMessageRequest) (SubmitChatMessageResponse, error) {
 	if _, err := service.runStore.getChatSession(ctx, sessionID); err != nil {
-		return ChatMessageResponse{}, fmt.Errorf("get chat session: %w", err)
+		return SubmitChatMessageResponse{}, fmt.Errorf("get chat session: %w", err)
 	}
 	userMessage, err := service.runStore.createChatMessage(ctx, CreateChatMessageRecord{
 		SessionID:   sessionID,
@@ -142,71 +173,135 @@ func (service Service) CreateChatMessage(parent context.Context, sessionID strin
 		Attachments: request.Attachments,
 	})
 	if err != nil {
-		return ChatMessageResponse{}, fmt.Errorf("create user message: %w", err)
+		return SubmitChatMessageResponse{}, fmt.Errorf("create user message: %w", err)
 	}
+	service.publishMessageCreated(userMessage)
 
 	active, err := service.runStore.activeInterruption(ctx, sessionID)
 	if errors.Is(err, ErrNoActiveInterruption) {
 		active = nil
 	} else if err != nil {
-		return ChatMessageResponse{}, fmt.Errorf("active interruption: %w", err)
+		return SubmitChatMessageResponse{}, fmt.Errorf("active interruption: %w", err)
 	}
 	if active != nil {
-		return service.resumeChatRun(ctx, userMessage, *active, request)
+		return service.submitResumeChatRun(ctx, userMessage, *active, request)
 	}
-	return service.startChatRun(ctx, userMessage, request)
+	return service.submitNewChatRun(ctx, userMessage, request)
 }
 
-func (service Service) startChatRun(ctx context.Context, userMessage ChatMessage, request CreateChatMessageRequest) (ChatMessageResponse, error) {
+func (service Service) submitNewChatRun(ctx context.Context, userMessage ChatMessage, request CreateChatMessageRequest) (SubmitChatMessageResponse, error) {
 	run, err := service.runStore.startRun(ctx, CreateRunRecord{
 		SessionID:        userMessage.SessionID,
 		TriggerMessageID: userMessage.ID,
 	})
 	if err != nil {
-		return ChatMessageResponse{}, fmt.Errorf("start run: %w", err)
+		return SubmitChatMessageResponse{}, fmt.Errorf("start run: %w", err)
 	}
-
-	response, runErr := service.run(ctx, run, runRequest(request))
-	if runErr != nil {
-		failed, err := service.failRun(run, response, runErr)
-		return chatMessageResponse(userMessage, nil, failed), err
-	}
-	if err := service.completeRun(ctx, run, response); err != nil {
-		return ChatMessageResponse{}, err
-	}
-	assistantMessage, err := service.createAssistantMessage(ctx, userMessage.SessionID, response)
-	if err != nil {
-		return ChatMessageResponse{}, err
-	}
-	return chatMessageResponse(userMessage, assistantMessage, response), nil
+	service.eventBus.Publish(userMessage.SessionID, ChatEvent{Type: EventTypeRunStarted, ChatID: userMessage.SessionID, RunID: run.ID})
+	service.schedule(func() {
+		service.executeNewChatRun(run, userMessage.SessionID, runRequest(request))
+	})
+	return SubmitChatMessageResponse{
+		ChatID:      userMessage.SessionID,
+		UserMessage: userMessage,
+		RunID:       run.ID,
+		Status:      RunStatusRunning,
+	}, nil
 }
 
-func (service Service) resumeChatRun(ctx context.Context, userMessage ChatMessage, interruption Interruption, request CreateChatMessageRequest) (ChatMessageResponse, error) {
+func (service Service) submitResumeChatRun(ctx context.Context, userMessage ChatMessage, interruption Interruption, request CreateChatMessageRequest) (SubmitChatMessageResponse, error) {
 	if err := service.runStore.resolveInterruption(ctx, interruption.ID, userMessage.ID, InterruptionStatusResolved); err != nil {
-		return ChatMessageResponse{}, fmt.Errorf("resolve interruption: %w", err)
+		return SubmitChatMessageResponse{}, fmt.Errorf("resolve interruption: %w", err)
 	}
 	stateRecord, err := service.runStore.getRunState(ctx, interruption.RunID)
 	if err != nil {
-		return ChatMessageResponse{}, fmt.Errorf("get run state: %w", err)
+		return SubmitChatMessageResponse{}, fmt.Errorf("get run state: %w", err)
 	}
 	run := stateRecord.Run
 	run.Status = RunStatusRunning
 	resolved := interruption
 	resolved.Status = InterruptionStatusResolved
 	resolved.RespondedAt = time.Now().UTC()
-	response, runErr := service.resumeRun(ctx, run, runRequest(request), &resolved, stateRecord.Observations)
+
+	service.eventBus.Publish(userMessage.SessionID, ChatEvent{
+		Type:           EventTypeInterruptionResolved,
+		ChatID:         userMessage.SessionID,
+		RunID:          run.ID,
+		InterruptionID: resolved.ID,
+		Interruption:   &resolved,
+	})
+	service.eventBus.Publish(userMessage.SessionID, ChatEvent{Type: EventTypeRunResumed, ChatID: userMessage.SessionID, RunID: run.ID})
+	service.schedule(func() {
+		service.executeResumedChatRun(run, userMessage.SessionID, runRequest(request), &resolved, stateRecord.Observations)
+	})
+	return SubmitChatMessageResponse{
+		ChatID:      userMessage.SessionID,
+		UserMessage: userMessage,
+		RunID:       run.ID,
+		Status:      RunStatusRunning,
+	}, nil
+}
+
+func (service Service) executeNewChatRun(run Run, sessionID string, request runRequest) {
+	ctx, cancel := context.WithTimeout(context.Background(), service.totalTimeout)
+	defer cancel()
+
+	response, runErr := service.run(ctx, run, request)
+	service.finishBackgroundRun(ctx, run, sessionID, response, runErr)
+}
+
+func (service Service) executeResumedChatRun(run Run, sessionID string, request runRequest, interruption *Interruption, observations []Observation) {
+	ctx, cancel := context.WithTimeout(context.Background(), service.totalTimeout)
+	defer cancel()
+
+	response, runErr := service.resumeRun(ctx, run, request, interruption, observations)
+	service.finishBackgroundRun(ctx, run, sessionID, response, runErr)
+}
+
+func (service Service) finishBackgroundRun(ctx context.Context, run Run, sessionID string, response RunResponse, runErr error) {
 	if runErr != nil {
-		failed, err := service.failRun(run, response, runErr)
-		return chatMessageResponse(userMessage, nil, failed), err
+		failed, failErr := service.failRun(run, response, runErr)
+		if failErr != nil {
+			failed.Error = RedactText(failErr.Error())
+		}
+		service.eventBus.Publish(sessionID, ChatEvent{Type: EventTypeRunFailed, ChatID: sessionID, RunID: run.ID, Run: &failed, Error: failed.Error})
+		return
 	}
 	if err := service.completeRun(ctx, run, response); err != nil {
-		return ChatMessageResponse{}, err
+		failed := RunResponse{RunID: run.ID, Status: RunStatusFailed, Error: RedactText(err.Error())}
+		service.eventBus.Publish(sessionID, ChatEvent{Type: EventTypeRunFailed, ChatID: sessionID, RunID: run.ID, Run: &failed, Error: failed.Error})
+		return
 	}
-	assistantMessage, err := service.createAssistantMessage(ctx, userMessage.SessionID, response)
+	assistantMessage, err := service.createAssistantMessage(ctx, sessionID, response)
 	if err != nil {
-		return ChatMessageResponse{}, err
+		failed := RunResponse{RunID: run.ID, Status: RunStatusFailed, Error: RedactText(err.Error())}
+		service.eventBus.Publish(sessionID, ChatEvent{Type: EventTypeRunFailed, ChatID: sessionID, RunID: run.ID, Run: &failed, Error: failed.Error})
+		return
 	}
-	return chatMessageResponse(userMessage, assistantMessage, response), nil
+	if assistantMessage != nil {
+		service.publishMessageCreated(*assistantMessage)
+	}
+	if response.Status == RunStatusInterrupted && response.Interruption != nil {
+		service.eventBus.Publish(sessionID, ChatEvent{
+			Type:           EventTypeInterruptionCreated,
+			ChatID:         sessionID,
+			RunID:          run.ID,
+			InterruptionID: response.Interruption.ID,
+			Interruption:   response.Interruption,
+		})
+		return
+	}
+	service.eventBus.Publish(sessionID, ChatEvent{Type: EventTypeRunCompleted, ChatID: sessionID, RunID: run.ID, Run: &response})
+}
+
+func (service Service) publishMessageCreated(message ChatMessage) {
+	service.eventBus.Publish(message.SessionID, ChatEvent{
+		Type:      EventTypeMessageCreated,
+		ChatID:    message.SessionID,
+		MessageID: message.ID,
+		RunID:     message.RunID,
+		Message:   &message,
+	})
 }
 
 func (service Service) createAssistantMessage(ctx context.Context, sessionID string, response RunResponse) (*ChatMessage, error) {
@@ -227,16 +322,6 @@ func (service Service) createAssistantMessage(ctx context.Context, sessionID str
 		return nil, fmt.Errorf("create assistant message: %w", err)
 	}
 	return &message, nil
-}
-
-func chatMessageResponse(userMessage ChatMessage, assistantMessage *ChatMessage, run RunResponse) ChatMessageResponse {
-	return ChatMessageResponse{
-		ChatID:           userMessage.SessionID,
-		UserMessage:      userMessage,
-		AssistantMessage: assistantMessage,
-		Run:              run,
-		Interruption:     run.Interruption,
-	}
 }
 
 func (service Service) run(ctx context.Context, run Run, request runRequest) (RunResponse, error) {
@@ -372,6 +457,12 @@ func (service Service) callTool(ctx context.Context, state *runState, stepOrder 
 		return err
 	}
 
+	service.eventBus.Publish(state.run.SessionID, ChatEvent{
+		Type:     EventTypeToolStarted,
+		ChatID:   state.run.SessionID,
+		RunID:    state.run.ID,
+		ToolName: tool.Name,
+	})
 	observation, step, err := service.executeTool(ctx, state, stepOrder, tool, inputs)
 	if saveErr := service.saveStep(ctx, step); saveErr != nil {
 		return saveErr
@@ -388,6 +479,14 @@ func (service Service) callTool(ctx context.Context, state *runState, stepOrder 
 	}); err != nil {
 		return fmt.Errorf("save observation: %w", err)
 	}
+	savedObservation := observation
+	service.eventBus.Publish(state.run.SessionID, ChatEvent{
+		Type:        EventTypeToolFinished,
+		ChatID:      state.run.SessionID,
+		RunID:       state.run.ID,
+		ToolName:    tool.Name,
+		Observation: &savedObservation,
+	})
 	if observation.Status == StepStatusFailed {
 		return recordBusinessError(state, tool.Name, observation.Error)
 	}
@@ -448,6 +547,14 @@ func (service Service) recordUnknownTool(ctx context.Context, state *runState, s
 	}); err != nil {
 		return fmt.Errorf("save observation: %w", err)
 	}
+	savedObservation := observation
+	service.eventBus.Publish(state.run.SessionID, ChatEvent{
+		Type:        EventTypeToolFinished,
+		ChatID:      state.run.SessionID,
+		RunID:       state.run.ID,
+		ToolName:    toolName,
+		Observation: &savedObservation,
+	})
 	return nil
 }
 

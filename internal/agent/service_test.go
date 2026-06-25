@@ -246,8 +246,122 @@ func (store *blockingFinishRunStore) FinishRun(ctx context.Context, run Run) err
 }
 
 type runResult struct {
-	response ChatMessageResponse
+	response SubmitChatMessageResponse
 	err      error
+}
+
+func immediateRunScheduler(task func()) {
+	task()
+}
+
+func TestServiceCreateChatMessageSchedulesRunWithoutExecutingImmediately(t *testing.T) {
+	runStore := newChatMemoryRunStore()
+	planner := &fakePlanner{actions: []PlannerAction{{Type: ActionTypeFinalAnswer, Answer: "done"}}}
+	bus := NewEventBusWithBuffer(8)
+	events, unsubscribe := bus.Subscribe("chat_test")
+	defer unsubscribe()
+
+	var scheduled func()
+	service := NewService(ServiceConfig{
+		Planner:      planner,
+		Catalog:      fakeCatalog{},
+		Executor:     &fakeExecutor{},
+		RunStore:     runStores(runStore),
+		MaxSteps:     3,
+		TotalTimeout: time.Second,
+		EventBus:     bus,
+		Schedule: func(task func()) {
+			scheduled = task
+		},
+	})
+
+	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "export report"})
+	if err != nil {
+		t.Fatalf("CreateChatMessage() error = %v", err)
+	}
+	if response.Status != RunStatusRunning || response.RunID == "" || response.UserMessage.Role != ChatMessageRoleUser {
+		t.Fatalf("response = %#v, want accepted running response", response)
+	}
+	if scheduled == nil {
+		t.Fatal("scheduled task is nil")
+	}
+	if len(planner.requests) != 0 {
+		t.Fatalf("planner requests = %d, want 0 before scheduled task runs", len(planner.requests))
+	}
+
+	assertNextEvent(t, events, EventTypeMessageCreated)
+	assertNextEvent(t, events, EventTypeRunStarted)
+
+	scheduled()
+
+	assertNextEvent(t, events, EventTypeMessageCreated)
+	assertNextEvent(t, events, EventTypeRunCompleted)
+}
+
+func TestServiceCreateChatMessageResolvesInterruptionAndSchedulesExistingRun(t *testing.T) {
+	runStore := newChatMemoryRunStore()
+	runStore.run = Run{ID: "run_existing", SessionID: "chat_test", Status: RunStatusInterrupted}
+	runStore.interruptions = append(runStore.interruptions, Interruption{
+		ID:        "int_1",
+		SessionID: "chat_test",
+		RunID:     "run_existing",
+		Type:      InterruptionTypeApproval,
+		Status:    InterruptionStatusAwaitingReview,
+		Message:   "Confirm import?",
+	})
+	planner := &fakePlanner{actions: []PlannerAction{{Type: ActionTypeFinalAnswer, Answer: "import complete"}}}
+	bus := NewEventBusWithBuffer(8)
+	events, unsubscribe := bus.Subscribe("chat_test")
+	defer unsubscribe()
+
+	var scheduled func()
+	service := NewService(ServiceConfig{
+		Planner:      planner,
+		Catalog:      fakeCatalog{},
+		Executor:     &fakeExecutor{},
+		RunStore:     runStores(runStore),
+		MaxSteps:     3,
+		TotalTimeout: time.Second,
+		EventBus:     bus,
+		Schedule: func(task func()) {
+			scheduled = task
+		},
+	})
+
+	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "confirm"})
+	if err != nil {
+		t.Fatalf("CreateChatMessage() error = %v", err)
+	}
+	if response.RunID != "run_existing" || response.Status != RunStatusRunning {
+		t.Fatalf("response = %#v, want existing run running", response)
+	}
+	if runStore.interruptions[0].Status != InterruptionStatusResolved {
+		t.Fatalf("interruption status = %q, want resolved", runStore.interruptions[0].Status)
+	}
+
+	assertNextEvent(t, events, EventTypeMessageCreated)
+	assertNextEvent(t, events, EventTypeInterruptionResolved)
+	assertNextEvent(t, events, EventTypeRunResumed)
+
+	scheduled()
+
+	assertNextEvent(t, events, EventTypeMessageCreated)
+	assertNextEvent(t, events, EventTypeRunCompleted)
+}
+
+func assertNextEvent(t *testing.T, events <-chan ChatEvent, eventType ChatEventType) ChatEvent {
+	t.Helper()
+
+	select {
+	case event := <-events:
+		if event.Type != eventType {
+			t.Fatalf("event.Type = %q, want %q in event %#v", event.Type, eventType, event)
+		}
+		return event
+	case <-time.After(250 * time.Millisecond):
+		t.Fatalf("timed out waiting for event %q", eventType)
+		return ChatEvent{}
+	}
 }
 
 //nolint:cyclop // This test verifies chat-message orchestration, tool execution, persistence, and response shape together.
@@ -258,6 +372,9 @@ func TestServiceCreateChatMessageExecutesToolThenAssistantMessage(t *testing.T) 
 		{Type: ActionTypeFinalAnswer, Answer: "done", Outputs: map[string]any{"report_file": "ctx://export_report/file"}},
 	}}
 	executor := &fakeExecutor{observations: []Observation{{Status: StepStatusSucceeded, Outputs: map[string]any{"report_file": "ctx://export_report/file"}}}}
+	bus := NewEventBusWithBuffer(8)
+	events, unsubscribe := bus.Subscribe("chat_test")
+	defer unsubscribe()
 	service := NewService(ServiceConfig{
 		Planner:      planner,
 		Catalog:      fakeCatalog{tools: []toolcatalog.Tool{{ID: testToolID, Name: "export_report", TimeoutMS: 1000}}, instructions: toolcatalog.Instructions{Content: "Use tools."}},
@@ -265,6 +382,8 @@ func TestServiceCreateChatMessageExecutesToolThenAssistantMessage(t *testing.T) 
 		RunStore:     runStores(runStore),
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
+		EventBus:     bus,
+		Schedule:     immediateRunScheduler,
 	})
 
 	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "export report"})
@@ -272,11 +391,14 @@ func TestServiceCreateChatMessageExecutesToolThenAssistantMessage(t *testing.T) 
 	if err != nil {
 		t.Fatalf("CreateChatMessage() error = %v", err)
 	}
-	if response.AssistantMessage == nil || response.AssistantMessage.Content != "done" {
-		t.Fatalf("AssistantMessage = %#v, want done", response.AssistantMessage)
+	if response.Status != RunStatusRunning || response.RunID != testRunID {
+		t.Fatalf("response = %#v, want accepted running response", response)
 	}
-	if response.Run.Status != RunStatusSucceeded || response.Run.Answer != "done" {
-		t.Fatalf("Run = %#v, want succeeded answer", response.Run)
+	if runStore.finishedRun.Status != RunStatusSucceeded {
+		t.Fatalf("finished run status = %q, want succeeded", runStore.finishedRun.Status)
+	}
+	if assistant := lastAssistantMessage(runStore); assistant == nil || assistant.Content != "done" {
+		t.Fatalf("assistant message = %#v, want done", assistant)
 	}
 	if len(runStore.steps) != 1 {
 		t.Fatalf("saved steps = %d, want 1", len(runStore.steps))
@@ -284,6 +406,18 @@ func TestServiceCreateChatMessageExecutesToolThenAssistantMessage(t *testing.T) 
 	if runStore.record.SessionID != "chat_test" || runStore.record.TriggerMessageID == "" {
 		t.Fatalf("CreateRunRecord = %#v, want chat session and trigger message", runStore.record)
 	}
+	assertNextEvent(t, events, EventTypeMessageCreated)
+	assertNextEvent(t, events, EventTypeRunStarted)
+	toolStarted := assertNextEvent(t, events, EventTypeToolStarted)
+	if toolStarted.ToolName != "export_report" {
+		t.Fatalf("toolStarted.ToolName = %q, want export_report", toolStarted.ToolName)
+	}
+	toolFinished := assertNextEvent(t, events, EventTypeToolFinished)
+	if toolFinished.Observation == nil || toolFinished.Observation.Status != StepStatusSucceeded {
+		t.Fatalf("toolFinished.Observation = %#v, want succeeded observation", toolFinished.Observation)
+	}
+	assertNextEvent(t, events, EventTypeMessageCreated)
+	assertNextEvent(t, events, EventTypeRunCompleted)
 }
 
 func TestServiceCreateChatMessageFailsOnUnknownToolAfterRetry(t *testing.T) {
@@ -296,11 +430,14 @@ func TestServiceCreateChatMessageFailsOnUnknownToolAfterRetry(t *testing.T) {
 
 	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "run missing"})
 
-	if err == nil {
-		t.Fatal("CreateChatMessage() error = nil, want error")
+	if err != nil {
+		t.Fatalf("CreateChatMessage() error = %v", err)
 	}
-	if response.Run.Status != RunStatusFailed {
-		t.Fatalf("Status = %q, want failed", response.Run.Status)
+	if response.Status != RunStatusRunning {
+		t.Fatalf("response status = %q, want running", response.Status)
+	}
+	if runStore.finishedRun.Status != RunStatusFailed {
+		t.Fatalf("finished run status = %q, want failed", runStore.finishedRun.Status)
 	}
 }
 
@@ -315,6 +452,7 @@ func TestServiceCreateChatMessageBoundsFailedRunPersistence(t *testing.T) {
 		RunStore:     runStores(&runStore.memoryRunStore),
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
+		Schedule:     immediateRunScheduler,
 	})
 	service.runStore.finishRun = runStore.FinishRun
 	service.failedRunFinishTimeout = cleanupTimeout
@@ -350,14 +488,11 @@ func requireFailedRunReturned(t *testing.T, done <-chan runResult) {
 	t.Helper()
 	select {
 	case result := <-done:
-		if result.err == nil {
-			t.Fatal("CreateChatMessage() error = nil, want planner error joined with cleanup deadline")
+		if result.err != nil {
+			t.Fatalf("CreateChatMessage() error = %v, want nil submit error", result.err)
 		}
-		if !errors.Is(result.err, context.DeadlineExceeded) {
-			t.Fatalf("CreateChatMessage() error = %v, want context deadline exceeded", result.err)
-		}
-		if result.response.Run.Status != RunStatusFailed {
-			t.Fatalf("response status = %q, want failed", result.response.Run.Status)
+		if result.response.Status != RunStatusRunning {
+			t.Fatalf("response status = %q, want running", result.response.Status)
 		}
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("CreateChatMessage() did not return after failed-run cleanup timeout")
@@ -406,14 +541,14 @@ func TestServiceCreateChatMessageCreatesInterruptionAndAssistantMessage(t *testi
 	if err != nil {
 		t.Fatalf("CreateChatMessage() error = %v", err)
 	}
-	if response.Run.Status != RunStatusInterrupted {
-		t.Fatalf("Status = %q, want interrupted", response.Run.Status)
+	if response.Status != RunStatusRunning {
+		t.Fatalf("response status = %q, want running", response.Status)
 	}
-	if response.Interruption == nil || response.Interruption.Message != "Which account should I use?" {
-		t.Fatalf("Interruption = %#v, want planner interruption", response.Interruption)
+	if len(runStore.interruptions) != 1 || runStore.interruptions[0].Message != "Which account should I use?" {
+		t.Fatalf("interruptions = %#v, want planner interruption", runStore.interruptions)
 	}
-	if response.AssistantMessage == nil || response.AssistantMessage.Content != "Which account should I use?" {
-		t.Fatalf("AssistantMessage = %#v, want interruption message", response.AssistantMessage)
+	if assistant := lastAssistantMessage(runStore); assistant == nil || assistant.Content != "Which account should I use?" {
+		t.Fatalf("assistant message = %#v, want interruption message", assistant)
 	}
 	if runStore.waitingRun.Status != RunStatusInterrupted {
 		t.Fatalf("waitingRun.Status = %q, want interrupted", runStore.waitingRun.Status)
@@ -440,6 +575,7 @@ func TestServiceCreateChatMessageResumesInterruptedRunWithAttachmentsAndObservat
 		RunStore:     runStores(runStore),
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
+		Schedule:     immediateRunScheduler,
 	})
 	attachments := []Attachment{{ID: "att_turn", Filename: "accounts.csv", MIMEType: "text/csv", Kind: AttachmentKindCSV, Size: 7, Data: "YSxiCg=="}}
 
@@ -447,8 +583,11 @@ func TestServiceCreateChatMessageResumesInterruptedRunWithAttachmentsAndObservat
 	if err != nil {
 		t.Fatalf("CreateChatMessage() error = %v", err)
 	}
-	if response.Run.RunID != testRunID || response.Run.Status != RunStatusSucceeded {
-		t.Fatalf("Run = %#v, want same run succeeded", response.Run)
+	if response.RunID != testRunID || response.Status != RunStatusRunning {
+		t.Fatalf("response = %#v, want same run accepted running", response)
+	}
+	if runStore.finishedRun.Status != RunStatusSucceeded {
+		t.Fatalf("finished run status = %q, want succeeded", runStore.finishedRun.Status)
 	}
 	requirePlannerSawInterruptionResume(t, planner)
 	if len(runStore.steps) != 1 || runStore.steps[0].StepOrder != 2 {
@@ -493,15 +632,19 @@ func TestServiceCreateChatMessageFailsAtStepLimit(t *testing.T) {
 		RunStore:     runStores(runStore),
 		MaxSteps:     1,
 		TotalTimeout: time.Minute,
+		Schedule:     immediateRunScheduler,
 	})
 
 	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "too many"})
 
-	if err == nil {
-		t.Fatal("CreateChatMessage() error = nil, want step limit error")
+	if err != nil {
+		t.Fatalf("CreateChatMessage() error = %v", err)
 	}
-	if response.Run.Status != RunStatusFailed {
-		t.Fatalf("Status = %q, want failed", response.Run.Status)
+	if response.Status != RunStatusRunning {
+		t.Fatalf("response status = %q, want running", response.Status)
+	}
+	if runStore.finishedRun.Status != RunStatusFailed {
+		t.Fatalf("finished run status = %q, want failed", runStore.finishedRun.Status)
 	}
 }
 
@@ -519,6 +662,7 @@ func TestServiceCreateChatMessageAllowsOneBusinessErrorFollowUp(t *testing.T) {
 		RunStore:     runStores(runStore),
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
+		Schedule:     immediateRunScheduler,
 	})
 
 	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "export missing partner"})
@@ -526,8 +670,11 @@ func TestServiceCreateChatMessageAllowsOneBusinessErrorFollowUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateChatMessage() error = %v", err)
 	}
-	if response.AssistantMessage == nil || response.AssistantMessage.Content != "partner not found" {
-		t.Fatalf("AssistantMessage = %#v, want partner not found", response.AssistantMessage)
+	if response.Status != RunStatusRunning {
+		t.Fatalf("response status = %q, want running", response.Status)
+	}
+	if assistant := lastAssistantMessage(runStore); assistant == nil || assistant.Content != "partner not found" {
+		t.Fatalf("assistant message = %#v, want partner not found", assistant)
 	}
 	if len(runStore.steps) != 1 || runStore.steps[0].Status != StepStatusFailed {
 		t.Fatalf("saved steps = %#v, want one failed step", runStore.steps)
@@ -551,15 +698,19 @@ func TestServiceCreateChatMessageFailsRepeatedBusinessError(t *testing.T) {
 		RunStore:     runStores(runStore),
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
+		Schedule:     immediateRunScheduler,
 	})
 
 	response, err := service.CreateChatMessage(context.Background(), "chat_test", CreateChatMessageRequest{Message: "export missing partner"})
 
-	if err == nil {
-		t.Fatal("CreateChatMessage() error = nil, want repeated business error")
+	if err != nil {
+		t.Fatalf("CreateChatMessage() error = %v", err)
 	}
-	if response.Run.Status != RunStatusFailed {
-		t.Fatalf("Status = %q, want failed", response.Run.Status)
+	if response.Status != RunStatusRunning {
+		t.Fatalf("response status = %q, want running", response.Status)
+	}
+	if runStore.finishedRun.Status != RunStatusFailed {
+		t.Fatalf("finished run status = %q, want failed", runStore.finishedRun.Status)
 	}
 }
 
@@ -571,7 +722,17 @@ func newTestService(planner Planner, runStore *memoryRunStore) Service {
 		RunStore:     runStores(runStore),
 		MaxSteps:     8,
 		TotalTimeout: time.Minute,
+		Schedule:     immediateRunScheduler,
 	})
+}
+
+func lastAssistantMessage(store *memoryRunStore) *ChatMessage {
+	for index := len(store.messages) - 1; index >= 0; index-- {
+		if store.messages[index].Role == ChatMessageRoleAssistant {
+			return &store.messages[index]
+		}
+	}
+	return nil
 }
 
 func newChatMemoryRunStore() *memoryRunStore {

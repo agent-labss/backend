@@ -84,6 +84,7 @@ func newRouterConfig(cfg config.Config, database *gorm.DB) (httpapi.RouterConfig
 func newAgentHandler(cfg config.Config, repository agent.Repository, catalog agent.Catalog) agent.Handler {
 	planner := agent.NewOpenAIPlanner(cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.OpenAIBaseURL)
 	executor := agent.NewCLIExecutor()
+	eventBus := agent.NewEventBus()
 	service := agent.NewService(agent.ServiceConfig{
 		Planner:      planner,
 		Catalog:      catalog,
@@ -91,8 +92,9 @@ func newAgentHandler(cfg config.Config, repository agent.Repository, catalog age
 		RunStore:     agent.NewRunStore(repository),
 		MaxSteps:     cfg.AgentMaxSteps,
 		TotalTimeout: time.Duration(cfg.AgentTotalTimeoutMS) * time.Millisecond,
+		EventBus:     eventBus,
 	})
-	return agent.NewHandler(service, service, agent.UploadConfig{
+	return agent.NewHandler(service, service, service, agent.UploadConfig{
 		MaxFiles:      cfg.AgentMaxFilesPerRun,
 		MaxFileBytes:  cfg.AgentMaxFileBytes,
 		MaxTotalBytes: cfg.AgentMaxTotalFileBytes,

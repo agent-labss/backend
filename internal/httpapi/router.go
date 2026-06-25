@@ -34,6 +34,7 @@ type ChatSessionHandler interface {
 type ChatMessageHandler interface {
 	ListChatMessages(c fiber.Ctx) error
 	CreateChatMessage(c fiber.Ctx) error
+	SubscribeChatEvents(c fiber.Ctx) error
 }
 
 func NewRouter(config RouterConfig) *fiber.App {
@@ -52,6 +53,7 @@ func NewRouter(config RouterConfig) *fiber.App {
 	if config.ChatMessageHandler != nil {
 		app.Get(agent.ChatMessagesPath, config.ChatMessageHandler.ListChatMessages)
 		app.Post(agent.ChatMessagesPath, config.ChatMessageHandler.CreateChatMessage)
+		app.Get(agent.ChatEventsPath, config.ChatMessageHandler.SubscribeChatEvents)
 	}
 	return app
 }

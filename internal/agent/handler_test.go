@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"net/textproto"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
@@ -21,6 +24,14 @@ type fakeChatService struct {
 	called      bool
 	chatRequest CreateChatMessageRequest
 	chatID      string
+}
+
+type fakeChatEventService struct {
+	subscribeChatEvents func(ctx context.Context, chatID string) (<-chan ChatEvent, func(), error)
+}
+
+func (service fakeChatEventService) SubscribeChatEvents(ctx context.Context, chatID string) (<-chan ChatEvent, func(), error) {
+	return service.subscribeChatEvents(ctx, chatID)
 }
 
 func (service *fakeChatService) CreateChat(ctx context.Context, request CreateChatRequest) (ChatSession, error) {
@@ -48,7 +59,7 @@ func (service *fakeChatService) CreateChatMessage(_ context.Context, chatID stri
 
 func TestHandlerCreateChatReturnsSession(t *testing.T) {
 	service := &fakeChatService{}
-	handler := NewHandler(service, service)
+	handler := NewHandler(service, service, nil)
 	app := fiber.New()
 	app.Post(ChatSessionsPath, handler.CreateChat)
 
@@ -102,7 +113,7 @@ func TestHandlerCreateChatMessageAcceptsJSON(t *testing.T) {
 
 func TestHandlerGetChatReturnsSession(t *testing.T) {
 	service := &fakeChatService{chat: ChatSession{ID: "chat_test", Title: "Reports", Status: ChatSessionStatusOpen}}
-	handler := NewHandler(service, service)
+	handler := NewHandler(service, service, nil)
 	app := fiber.New()
 	app.Get(ChatSessionPath, handler.GetChat)
 
@@ -126,7 +137,7 @@ func TestHandlerGetChatReturnsSession(t *testing.T) {
 
 func TestHandlerListChatMessagesReturnsMessages(t *testing.T) {
 	service := &fakeChatService{messages: []ChatMessage{{ID: "msg_1", SessionID: "chat_test", Role: ChatMessageRoleUser, Content: "hi"}}}
-	handler := NewHandler(service, service)
+	handler := NewHandler(service, service, nil)
 	app := fiber.New()
 	app.Get(ChatMessagesPath, handler.ListChatMessages)
 
@@ -145,6 +156,44 @@ func TestHandlerListChatMessagesReturnsMessages(t *testing.T) {
 	}
 	if service.chatID != "chat_test" {
 		t.Fatalf("chatID = %q, want chat_test", service.chatID)
+	}
+}
+
+func TestHandlerSubscribeChatEventsStreamsConnectedAndEvents(t *testing.T) {
+	events := make(chan ChatEvent, 2)
+	events <- ChatEvent{Type: EventTypeRunStarted, ChatID: "chat_1", RunID: "run_1"}
+	close(events)
+	handler := NewHandler(nil, nil, fakeChatEventService{
+		subscribeChatEvents: func(_ context.Context, chatID string) (<-chan ChatEvent, func(), error) {
+			if chatID != "chat_1" {
+				t.Fatalf("chatID = %q, want chat_1", chatID)
+			}
+			return events, func() {}, nil
+		},
+	})
+	app := fiber.New()
+	app.Get(ChatEventsPath, handler.SubscribeChatEvents)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/chats/chat_1/events", nil)
+	response, err := app.Test(request)
+	if err != nil {
+		t.Fatalf("app.Test() error = %v", err)
+	}
+	defer closeAgentResponseBody(t, response)
+
+	if contentType := response.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
+		t.Fatalf("Content-Type = %q, want text/event-stream", contentType)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "event: connected") {
+		t.Fatalf("body = %q, want connected event", text)
+	}
+	if !strings.Contains(text, "event: run.started") || !strings.Contains(text, `"run_id":"run_1"`) {
+		t.Fatalf("body = %q, want run.started event", text)
 	}
 }
 
@@ -313,7 +362,7 @@ func requireMultipartPDFRequest(t *testing.T, request CreateChatMessageRequest) 
 func performMultipartCreateChatMessage(t *testing.T, service *fakeChatService, message string, filename string, mimeType string, data []byte) *http.Response {
 	t.Helper()
 
-	handler := NewHandler(service, service, UploadConfig{MaxFiles: 2, MaxFileBytes: 1024, MaxTotalBytes: 2048})
+	handler := NewHandler(service, service, nil, UploadConfig{MaxFiles: 2, MaxFileBytes: 1024, MaxTotalBytes: 2048})
 	app := fiber.New()
 	app.Post(ChatMessagesPath, handler.CreateChatMessage)
 
@@ -341,7 +390,7 @@ func testCreateChatMessageRequest(t *testing.T, service *fakeChatService, body [
 func testCreateChatMessageRequestWithUploadConfig(t *testing.T, service *fakeChatService, body []byte, uploadConfig UploadConfig) *http.Response {
 	t.Helper()
 
-	handler := NewHandler(service, service, uploadConfig)
+	handler := NewHandler(service, service, nil, uploadConfig)
 	app := fiber.New()
 	app.Post(ChatMessagesPath, handler.CreateChatMessage)
 

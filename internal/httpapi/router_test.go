@@ -52,6 +52,10 @@ func (handler fakeChatHandler) CreateChatMessage(c fiber.Ctx) error {
 	return c.SendStatus(http.StatusOK)
 }
 
+func (handler fakeChatHandler) SubscribeChatEvents(c fiber.Ctx) error {
+	return c.SendStatus(http.StatusNoContent)
+}
+
 func TestOptionsRequestReturnsCORSHeaders(t *testing.T) {
 	app := NewRouter(RouterConfig{
 		StatusHandler: status.NewHandler(status.NewService(), "test"),
@@ -114,6 +118,10 @@ func TestChatMessagesGetRouteIsRegistered(t *testing.T) {
 
 func TestChatMessageRouteIsRegistered(t *testing.T) {
 	assertRouteStatus(t, http.MethodPost, agent.ChatSessionsPath+"/chat_test/messages", http.StatusOK)
+}
+
+func TestChatEventsRouteIsRegistered(t *testing.T) {
+	assertRouteStatus(t, http.MethodGet, agent.ChatSessionsPath+"/chat_test/events", http.StatusNoContent)
 }
 
 func TestNewRouterUsesUploadBodyLimit(t *testing.T) {

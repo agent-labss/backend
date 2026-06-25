@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"net/http"
 	"reflect"
 	"testing"
@@ -131,6 +132,29 @@ func TestNewRouterUsesUploadBodyLimit(t *testing.T) {
 
 	if app.Config().BodyLimit != uploadBodyLimit {
 		t.Fatalf("BodyLimit = %d, want %d", app.Config().BodyLimit, uploadBodyLimit)
+	}
+}
+
+func TestNewRouterDefaultBodyLimitAcceptsAgentTotalUploadDefault(t *testing.T) {
+	app := NewRouter(RouterConfig{
+		StatusHandler:      status.NewHandler(status.NewService(), "test"),
+		ChatMessageHandler: fakeChatHandler{},
+	})
+	body := bytes.NewReader(make([]byte, 10*1024*1024+1))
+
+	req, err := http.NewRequest(http.MethodPost, agent.ChatSessionsPath+"/chat_test/messages", body)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("Test() error = %v", err)
+	}
+	defer closeResponseBody(t, resp)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 }
 

@@ -10,7 +10,7 @@ import (
 
 const (
 	StatusPath      = "/api/status"
-	uploadBodyLimit = 10 * 1024 * 1024
+	uploadBodyLimit = 25 * 1024 * 1024
 )
 
 type RouterConfig struct {

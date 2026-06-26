@@ -3,6 +3,7 @@ package toolcatalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -56,6 +57,14 @@ func TestRepositoryUpdateAndGetsInstructions(t *testing.T) {
 	}
 	if got.Content != saved.Content {
 		t.Fatalf("GetInstructions() Content = %q, want %q", got.Content, saved.Content)
+	}
+}
+
+func TestRepositoryGetInstructionsReturnsNotFoundWhenMissing(t *testing.T) {
+	repository := NewRepository(newTestDatabase(t))
+
+	if _, err := repository.GetInstructions(context.Background()); !errors.Is(err, ErrInstructionsNotFound) {
+		t.Fatalf("GetInstructions() error = %v, want ErrInstructionsNotFound", err)
 	}
 }
 

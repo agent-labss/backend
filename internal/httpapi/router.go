@@ -10,13 +10,14 @@ import (
 
 const (
 	StatusPath      = "/api/status"
-	uploadBodyLimit = 10 * 1024 * 1024
+	uploadBodyLimit = 25 * 1024 * 1024
 )
 
 type RouterConfig struct {
-	StatusHandler status.Handler
-	ToolHandler   ToolHandler
-	AgentHandler  AgentHandler
+	StatusHandler      status.Handler
+	ToolHandler        ToolHandler
+	ChatSessionHandler ChatSessionHandler
+	ChatMessageHandler ChatMessageHandler
 }
 
 type ToolHandler interface {
@@ -25,8 +26,15 @@ type ToolHandler interface {
 	UpdateInstructions(c fiber.Ctx) error
 }
 
-type AgentHandler interface {
-	CreateRun(c fiber.Ctx) error
+type ChatSessionHandler interface {
+	CreateChat(c fiber.Ctx) error
+	GetChat(c fiber.Ctx) error
+}
+
+type ChatMessageHandler interface {
+	ListChatMessages(c fiber.Ctx) error
+	CreateChatMessage(c fiber.Ctx) error
+	SubscribeChatEvents(c fiber.Ctx) error
 }
 
 func NewRouter(config RouterConfig) *fiber.App {
@@ -38,8 +46,14 @@ func NewRouter(config RouterConfig) *fiber.App {
 		app.Get(toolcatalog.ToolsPath, config.ToolHandler.ListTools)
 		app.Put(toolcatalog.AgentInstructionsPath, config.ToolHandler.UpdateInstructions)
 	}
-	if config.AgentHandler != nil {
-		app.Post(agent.AgentRunsPath, config.AgentHandler.CreateRun)
+	if config.ChatSessionHandler != nil {
+		app.Post(agent.ChatSessionsPath, config.ChatSessionHandler.CreateChat)
+		app.Get(agent.ChatSessionPath, config.ChatSessionHandler.GetChat)
+	}
+	if config.ChatMessageHandler != nil {
+		app.Get(agent.ChatMessagesPath, config.ChatMessageHandler.ListChatMessages)
+		app.Post(agent.ChatMessagesPath, config.ChatMessageHandler.CreateChatMessage)
+		app.Get(agent.ChatEventsPath, config.ChatMessageHandler.SubscribeChatEvents)
 	}
 	return app
 }

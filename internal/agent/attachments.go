@@ -16,6 +16,37 @@ var (
 	ErrUnsupportedAttachmentRef  = errors.New("unsupported attachment reference")
 )
 
+const (
+	AttachmentKindPDF         AttachmentKind = "pdf"
+	AttachmentKindImage       AttachmentKind = "image"
+	AttachmentKindSpreadsheet AttachmentKind = "spreadsheet"
+	AttachmentKindCSV         AttachmentKind = "csv"
+)
+
+type AttachmentKind string
+
+type Attachment struct {
+	ID       string         `json:"id"`
+	Filename string         `json:"filename"`
+	MIMEType string         `json:"mime_type"`
+	Kind     AttachmentKind `json:"kind"`
+	Size     int64          `json:"size"`
+	Data     string         `json:"data,omitempty"`
+	FileID   string         `json:"file_id,omitempty"`
+}
+
+type UploadedFile struct {
+	Filename string
+	MIMEType string
+	Data     []byte
+}
+
+type UploadConfig struct {
+	MaxFiles      int
+	MaxFileBytes  int
+	MaxTotalBytes int
+}
+
 var supportedAttachmentTypes = map[string]AttachmentKind{
 	"application/pdf|.pdf": AttachmentKindPDF,
 	"image/png|.png":       AttachmentKindImage,
@@ -137,4 +168,21 @@ func attachmentPromptView(attachment Attachment) map[string]any {
 		"data":      "[omitted]",
 		"file_id":   attachment.FileID,
 	}
+}
+
+func attachmentMetadata(attachment Attachment) Attachment {
+	attachment.Data = ""
+	attachment.FileID = ""
+	return attachment
+}
+
+func attachmentMetadataList(attachments []Attachment) []Attachment {
+	if len(attachments) == 0 {
+		return nil
+	}
+	metadata := make([]Attachment, 0, len(attachments))
+	for _, attachment := range attachments {
+		metadata = append(metadata, attachmentMetadata(attachment))
+	}
+	return metadata
 }

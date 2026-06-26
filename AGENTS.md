@@ -42,7 +42,17 @@ Typed query helpers are generated with GORM CLI. Edit `internal/database/queryin
 go run gorm.io/cli/gorm@v0.2.4 gen -i internal/database/queryinput/queries.go -o internal/database/generated
 ```
 
-Do not hand-edit generated query code unless you are deliberately removing stale generated output and have updated the query input source in the same change. Keep custom SQL in the query input package and general create/update operations on GORM's typed API where no custom query is needed.
+Do not hand-edit generated query code. Treat `internal/database/queryinput/queries.go` as the source of truth for custom SQL, then regenerate `internal/database/generated` in the same change. Repository code should call generated query methods directly and keep database intent visible in the query input interface.
+
+Keep repository code simple:
+
+- Use generated typed `Create` for ordinary inserts.
+- Use query input methods for reads, filtered updates, ordered lists, aggregate lookups, atomic claims, and any operation that needs not-found or rows-affected semantics.
+- When an update needs to prove it changed a row, express that in SQL with `RETURNING *` and have the generated method return the record. Do not use `gorm.WithResult`, direct row-count checks, or typed `Where(...).Updates(...)` chains in repository code.
+- Multi-step repository transactions may group generated query calls, but the transaction body should still delegate filtering and SQL semantics to generated helpers.
+- Because GORM CLI raw SQL methods scan into zero values when no rows match, repository code must preserve domain not-found behavior explicitly after generated lookups.
+
+Production code outside `internal/database/generated` must not use hand-written GORM query entry points such as `Where`, `Order`, `First`, `Find`, `Scan`, `Save`, `Raw`, `Exec`, `Update`, `Updates`, `Delete`, `Take`, `Last`, `Row`, `Rows`, `Table`, `Model`, `Clauses`, or `Count`. Add or change SQL in `internal/database/queryinput/queries.go`, regenerate `internal/database/generated`, and call the generated query methods from owning packages. Production code outside generated query code must not import GORM CLI builder internals such as `gorm.io/cli/gorm/field` or `gorm.io/cli/gorm/typed`.
 
 ## AI Change Discipline
 
@@ -61,7 +71,7 @@ Keep package ownership intact:
 - `internal/platform/sqlite` owns SQLite connectivity and migration only.
 - `internal/status` owns status behavior only.
 - `internal/toolcatalog` owns tool metadata, trusted command validation, instruction storage, and related handlers/services only.
-- `internal/agent` owns agent runs, OpenAI planning, CLI execution, redaction, run context, audit persistence, and related handlers/services only.
+- `internal/agent` owns agent executions, OpenAI planning, CLI execution, redaction, execution context, audit persistence, and related handlers/services only.
 
 Do not bypass package boundaries. In particular, HTTP routing helpers must not import database platform packages, status logic must not import HTTP or platform packages, domain packages must not import `internal/platform/datastore` or `internal/platform/sqlite`, and platform packages must not import application, HTTP, status, agent, or tool catalog packages.
 

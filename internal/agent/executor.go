@@ -14,14 +14,15 @@ import (
 )
 
 var ErrToolExecutionFailed = errors.New("tool execution failed")
+var ErrUnresolvedContextReference = errors.New("unresolved context reference")
 
 type ExecuteRequest struct {
-	RunID      string
-	StepID     string
-	StepOrder  int
-	Tool       toolcatalog.Tool
-	Inputs     map[string]any
-	RunContext *RunContext
+	ExecutionID      string
+	StepID           string
+	StepOrder        int
+	Tool             toolcatalog.Tool
+	Inputs           map[string]any
+	ExecutionContext *ExecutionContext
 }
 
 type CLIExecutor struct{}
@@ -31,8 +32,8 @@ func NewCLIExecutor() CLIExecutor {
 }
 
 func (executor CLIExecutor) Execute(parent context.Context, request ExecuteRequest) (Observation, error) {
-	runContext := requestRunContext(request)
-	stdout, err := executor.runCommand(parent, request, runContext)
+	executionContext := requestExecutionContext(request)
+	stdout, err := executor.runCommand(parent, request, executionContext)
 	if err != nil {
 		return Observation{}, err
 	}
@@ -42,15 +43,19 @@ func (executor CLIExecutor) Execute(parent context.Context, request ExecuteReque
 		return Observation{}, err
 	}
 
-	return observationFromToolResult(request, runContext, result)
+	return observationFromToolResult(request, executionContext, result)
 }
 
-func (executor CLIExecutor) runCommand(parent context.Context, request ExecuteRequest, runContext *RunContext) ([]byte, error) {
+func (executor CLIExecutor) runCommand(parent context.Context, request ExecuteRequest, executionContext *ExecutionContext) ([]byte, error) {
 	timeout := time.Duration(request.Tool.TimeoutMS) * time.Millisecond
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
-	stdin, err := json.Marshal(executor.inputEnvelope(request, runContext))
+	envelope, err := executor.inputEnvelope(request, executionContext)
+	if err != nil {
+		return nil, err
+	}
+	stdin, err := json.Marshal(envelope)
 	if err != nil {
 		return nil, fmt.Errorf("%w: encode stdin: %w", ErrToolExecutionFailed, err)
 	}
@@ -70,15 +75,19 @@ func (executor CLIExecutor) runCommand(parent context.Context, request ExecuteRe
 	return stdout.Bytes(), nil
 }
 
-func (executor CLIExecutor) inputEnvelope(request ExecuteRequest, runContext *RunContext) ToolInputEnvelope {
+func (executor CLIExecutor) inputEnvelope(request ExecuteRequest, executionContext *ExecutionContext) (ToolInputEnvelope, error) {
+	inputs, err := resolveInputs(request.Inputs, executionContext)
+	if err != nil {
+		return ToolInputEnvelope{}, err
+	}
 	envelope := ToolInputEnvelope{
-		RunID:   request.RunID,
-		StepID:  request.StepID,
-		Inputs:  resolveInputs(request.Inputs, runContext),
-		Context: map[string]any{},
+		ExecutionID: request.ExecutionID,
+		StepID:      request.StepID,
+		Inputs:      inputs,
+		Context:     map[string]any{},
 	}
 
-	return envelope
+	return envelope, nil
 }
 
 func commandError(ctx context.Context, toolName string, stderr string, err error) error {
@@ -98,12 +107,12 @@ func decodeToolResult(stdout []byte) (ToolResult, error) {
 	return result, nil
 }
 
-func observationFromToolResult(request ExecuteRequest, runContext *RunContext, result ToolResult) (Observation, error) {
+func observationFromToolResult(request ExecuteRequest, executionContext *ExecutionContext, result ToolResult) (Observation, error) {
 	switch result.Status {
 	case ToolResultStatusError:
 		return failedObservation(request, result), nil
 	case ToolResultStatusOK:
-		return succeededObservation(request, runContext, result), nil
+		return succeededObservation(request, executionContext, result), nil
 	default:
 		return Observation{}, fmt.Errorf("%w: tool returned status %q", ErrToolExecutionFailed, result.Status)
 	}
@@ -123,20 +132,20 @@ func failedObservation(request ExecuteRequest, result ToolResult) Observation {
 	}
 }
 
-func succeededObservation(request ExecuteRequest, runContext *RunContext, result ToolResult) Observation {
+func succeededObservation(request ExecuteRequest, executionContext *ExecutionContext, result ToolResult) Observation {
 	return Observation{
 		StepOrder: request.StepOrder,
 		ToolName:  request.Tool.Name,
 		Status:    StepStatusSucceeded,
-		Outputs:   outputsFromToolResult(request, runContext, result),
+		Outputs:   outputsFromToolResult(request, executionContext, result),
 	}
 }
 
-func outputsFromToolResult(request ExecuteRequest, runContext *RunContext, result ToolResult) map[string]any {
+func outputsFromToolResult(request ExecuteRequest, executionContext *ExecutionContext, result ToolResult) map[string]any {
 	outputs := make(map[string]any, len(result.Outputs))
 	for name, output := range result.Outputs {
 		if output.Sensitive {
-			outputs[name] = runContext.Store(request.StepID, request.Tool.Name, name, output.Value)
+			outputs[name] = executionContext.Store(request.StepID, request.Tool.Name, name, output.Value)
 			continue
 		}
 		outputs[name] = RedactJSONValue(output.Value)
@@ -145,45 +154,71 @@ func outputsFromToolResult(request ExecuteRequest, runContext *RunContext, resul
 	return outputs
 }
 
-func resolveInputs(inputs map[string]any, runContext *RunContext) map[string]any {
+func resolveInputs(inputs map[string]any, executionContext *ExecutionContext) (map[string]any, error) {
 	resolved := make(map[string]any, len(inputs))
 	for key, value := range inputs {
-		resolveInputValueInto(resolved, key, value, runContext)
+		if err := resolveInputValueInto(resolved, key, value, executionContext); err != nil {
+			return nil, err
+		}
 	}
 
-	return resolved
+	return resolved, nil
 }
 
-func resolveInputValueInto(resolved map[string]any, key string, value any, runContext *RunContext) {
+func resolveInputValueInto(resolved map[string]any, key string, value any, executionContext *ExecutionContext) error {
 	switch typed := value.(type) {
 	case string:
-		contextValue, ok := runContext.Resolve(typed)
-		if !ok {
-			resolved[key] = value
-			return
-		}
-		resolved[key] = contextValue.Value
+		return resolveStringInputInto(resolved, key, typed, executionContext)
 	case map[string]any:
-		resolved[key] = resolveInputs(typed, runContext)
+		nested, err := resolveInputs(typed, executionContext)
+		if err != nil {
+			return err
+		}
+		resolved[key] = nested
 	case []any:
-		resolvedSlice := make([]any, 0, len(typed))
-		for _, item := range typed {
-			wrapped := make(map[string]any, 1)
-			resolveInputValueInto(wrapped, key, item, runContext)
-			resolvedSlice = append(resolvedSlice, wrapped[key])
+		resolvedSlice, err := resolveInputSlice(key, typed, executionContext)
+		if err != nil {
+			return err
 		}
 		resolved[key] = resolvedSlice
 	default:
 		resolved[key] = value
 	}
+
+	return nil
 }
 
-func requestRunContext(request ExecuteRequest) *RunContext {
-	if request.RunContext != nil {
-		return request.RunContext
+func resolveStringInputInto(resolved map[string]any, key string, value string, executionContext *ExecutionContext) error {
+	contextValue, ok := executionContext.Resolve(value)
+	if !ok {
+		if isContextReference(value) {
+			return fmt.Errorf("%w: %s", ErrUnresolvedContextReference, value)
+		}
+		resolved[key] = value
+		return nil
+	}
+	resolved[key] = contextValue.Value
+	return nil
+}
+
+func resolveInputSlice(key string, values []any, executionContext *ExecutionContext) ([]any, error) {
+	resolvedSlice := make([]any, 0, len(values))
+	for _, item := range values {
+		wrapped := make(map[string]any, 1)
+		if err := resolveInputValueInto(wrapped, key, item, executionContext); err != nil {
+			return nil, err
+		}
+		resolvedSlice = append(resolvedSlice, wrapped[key])
+	}
+	return resolvedSlice, nil
+}
+
+func requestExecutionContext(request ExecuteRequest) *ExecutionContext {
+	if request.ExecutionContext != nil {
+		return request.ExecutionContext
 	}
 
-	return NewRunContext()
+	return NewExecutionContext()
 }
 
 func minimalToolEnvironment() []string {

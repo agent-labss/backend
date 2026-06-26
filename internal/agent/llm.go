@@ -21,6 +21,7 @@ type PlanRequest struct {
 	Instructions string
 	Message      string
 	Attachments  []Attachment
+	Interruption *Interruption
 	Tools        []toolcatalog.Tool
 	Observations []Observation
 }
@@ -88,11 +89,13 @@ func buildPlannerPrompt(request PlanRequest) ([]byte, error) {
 		"instructions":    request.Instructions,
 		"message":         request.Message,
 		"attachments":     attachmentPromptViews(request.Attachments),
+		"interruption":    request.Interruption,
 		"tools":           plannerTools(request.Tools),
 		"observations":    request.Observations,
 		"output_contract": "Return exactly one JSON object for the next planner action. Do not include Markdown, prose, fenced JSON, refusals, or partial output.",
 		"allowed_actions": []string{
 			string(ActionTypeCallTool),
+			string(ActionTypeAskUser),
 			string(ActionTypeFinalAnswer),
 		},
 	})
@@ -183,6 +186,8 @@ func validatePlannerAction(action PlannerAction) error {
 	switch action.Type {
 	case ActionTypeCallTool:
 		return validateCallToolAction(action)
+	case ActionTypeAskUser:
+		return validateAskUserAction(action)
 	case ActionTypeFinalAnswer:
 		return validateFinalAnswerAction(action)
 	default:
@@ -196,6 +201,17 @@ func validateCallToolAction(action PlannerAction) error {
 	}
 	if !isJSONObject(action.Inputs) {
 		return fmt.Errorf("%w: inputs must be a JSON object", ErrInvalidPlannerAction)
+	}
+
+	return nil
+}
+
+func validateAskUserAction(action PlannerAction) error {
+	if strings.TrimSpace(action.Message) == "" {
+		return fmt.Errorf("%w: message is required", ErrInvalidPlannerAction)
+	}
+	if len(action.Payload) > 0 && !isJSONObject(action.Payload) {
+		return fmt.Errorf("%w: payload must be a JSON object", ErrInvalidPlannerAction)
 	}
 
 	return nil

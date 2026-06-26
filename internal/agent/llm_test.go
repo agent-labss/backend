@@ -303,6 +303,29 @@ func TestParsePlannerActionAcceptsCallTool(t *testing.T) {
 	}
 }
 
+func TestParsePlannerActionAcceptsAskUser(t *testing.T) {
+	action, err := ParsePlannerAction([]byte(`{"type":"ask_user","message":"Which account should I use?","payload":{"kind":"choice"}}`))
+	if err != nil {
+		t.Fatalf("ParsePlannerAction() error = %v", err)
+	}
+	if action.Type != ActionTypeAskUser {
+		t.Fatalf("action.Type = %q, want %q", action.Type, ActionTypeAskUser)
+	}
+	if action.Message != "Which account should I use?" {
+		t.Fatalf("Message = %q, want planner question", action.Message)
+	}
+}
+
+func TestParsePlannerActionRejectsAskUserWithoutMessage(t *testing.T) {
+	_, err := ParsePlannerAction([]byte(`{"type":"ask_user"}`))
+	if err == nil {
+		t.Fatal("ParsePlannerAction() error = nil, want error")
+	}
+	if !errors.Is(err, ErrInvalidPlannerAction) {
+		t.Fatalf("ParsePlannerAction() error = %v, want ErrInvalidPlannerAction", err)
+	}
+}
+
 func TestParsePlannerActionRejectsUnknownAction(t *testing.T) {
 	_, err := ParsePlannerAction([]byte(`{"type":"run_shell"}`))
 
@@ -331,6 +354,40 @@ func TestParsePlannerActionRejectsNonJSONPlannerText(t *testing.T) {
 				t.Fatalf("ParsePlannerAction() error = %v, want ErrInvalidPlannerAction", err)
 			}
 		})
+	}
+}
+
+func TestBuildPlannerPromptAllowsAskUser(t *testing.T) {
+	prompt, err := buildPlannerPrompt(PlanRequest{Message: "delete duplicate account"})
+	if err != nil {
+		t.Fatalf("buildPlannerPrompt() error = %v", err)
+	}
+	if !strings.Contains(string(prompt), string(ActionTypeAskUser)) {
+		t.Fatalf("prompt = %s, want ask_user in allowed actions", prompt)
+	}
+}
+
+func TestBuildPlannerPromptIncludesInterruption(t *testing.T) {
+	prompt, err := buildPlannerPrompt(PlanRequest{
+		Message: "ok",
+		Interruption: &Interruption{
+			ID:      "int_test",
+			Type:    InterruptionTypeInputRequest,
+			Message: "Delete the duplicate account?",
+			Payload: json.RawMessage(`{"risk":"destructive"}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildPlannerPrompt() error = %v", err)
+	}
+	if !strings.Contains(string(prompt), "Delete the duplicate account?") {
+		t.Fatalf("prompt = %s, want interruption message", prompt)
+	}
+	if !strings.Contains(string(prompt), "int_test") {
+		t.Fatalf("prompt = %s, want interruption id", prompt)
+	}
+	if !strings.Contains(string(prompt), "interruption") {
+		t.Fatalf("prompt = %s, want interruption key", prompt)
 	}
 }
 

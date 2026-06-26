@@ -13,6 +13,12 @@ require_command() {
 require_command go
 require_command golangci-lint
 
+forbidden_database_pattern() {
+  local file="$1"
+  grep -Eq '("ai/backend/internal/database/generated"|"gorm.io/gorm"|"gorm.io/cli/gorm/field"|"gorm.io/cli/gorm/typed")' "${file}" || return 1
+  grep -Eq '(\.(Clauses|Count|Delete|Exec|Find|First|Last|Model|Order|Raw|Row|Rows|Save|Scan|Table|Take|Update|Updates|Where)\(|gorm\.WithResult\(|gorm\.io/cli/gorm/(field|typed))' "${file}"
+}
+
 echo "checking gofmt"
 unformatted="$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
 if [[ -n "${unformatted}" ]]; then
@@ -82,6 +88,32 @@ if find . \
     -print >&2
   exit 1
 fi
+
+echo "checking GORM CLI generated code"
+tmp_generated="$(mktemp -d)"
+cleanup() {
+  rm -rf "${tmp_generated}"
+}
+trap cleanup EXIT
+go run gorm.io/cli/gorm@v0.2.4 gen -i internal/database/queryinput/queries.go -o "${tmp_generated}/generated" >/dev/null
+if ! diff -qr internal/database/generated "${tmp_generated}/generated" >/dev/null; then
+  echo "internal/database/generated is out of date; regenerate with:" >&2
+  echo "go run gorm.io/cli/gorm@v0.2.4 gen -i internal/database/queryinput/queries.go -o internal/database/generated" >&2
+  diff -qr internal/database/generated "${tmp_generated}/generated" >&2 || true
+  exit 1
+fi
+
+echo "checking database access patterns"
+while IFS= read -r file; do
+  if forbidden_database_pattern "${file}"; then
+    echo "${file} uses direct GORM query APIs; put SQL in internal/database/queryinput and regenerate internal/database/generated" >&2
+    exit 1
+  fi
+done < <(find internal cmd -name '*.go' \
+  -not -path 'internal/database/generated/*' \
+  -not -path 'internal/platform/sqlite/*' \
+  -not -name '*_test.go' \
+  -print)
 
 echo "running tests"
 go test ./...
